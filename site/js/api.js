@@ -36,7 +36,10 @@ async function fetchCatalog() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url, { signal: controller.signal, cache: 'no-cache' });
+    // К настоящему серверу запрос без лишних параметров: служебные заголовки кэша могли бы вызвать
+    // предварительный CORS-запрос, а Apps Script на него не отвечает. Файл заглушки перечитываем всегда.
+    const options = isMockMode ? { signal: controller.signal, cache: 'no-cache' } : { signal: controller.signal };
+    const res = await fetch(url, options);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (!isValidCatalog(data)) throw new Error('Неверный ответ сервера');

@@ -3,6 +3,7 @@
 // Не входит в `node --test` (имена *.e2e.mjs), потому что нужен Playwright.
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +15,12 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; ch
 //   files — подмена файлов: { 'config.js': 'export const API_URL = "__BASE__api";' } (__BASE__ → адрес сервера)
 //   api(req, bodyText) — поддельный бэкенд по адресу /api; возвращает { status?, json?, drop?, delay? }
 //   (drop — оборвать соединение, как при пропавшей сети).
+// Тесты всегда идут в режиме заглушки, даже когда в site/config.js уже стоит настоящий адрес сервера:
+// config.js подменяется копией с пустым API_URL (если тест не подставил свой).
+const MOCK_CONFIG = readFileSync(join(SITE, 'config.js'), 'utf8').replace(/export const API_URL = '[^']*';/, "export const API_URL = '';");
+
 export function startServer({ files = {}, api = null } = {}) {
+  files = { 'config.js': MOCK_CONFIG, ...files };
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     const path = url.pathname;
