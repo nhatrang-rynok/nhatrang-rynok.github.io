@@ -41,7 +41,8 @@ function sendTelegram_(token, payload) {
     if (data && data.ok === true) return { ok: true, error: '' };
     return { ok: false, error: scrubSecrets_((data && data.description) || 'HTTP ' + response.getResponseCode(), [token]) };
   } catch (err) {
-    return { ok: false, error: scrubSecrets_(errorText_(err), [token]) };
+    const text = errorText_(err);
+    return { ok: false, error: scrubSecrets_(text, [token]) + permissionHint_(text) };
   }
 }
 
@@ -50,7 +51,8 @@ function sendMailFallback_(to, subject, body) {
     MailApp.sendEmail(to, subject, body);
     return { ok: true, error: '' };
   } catch (err) {
-    return { ok: false, error: errorText_(err) };
+    const text = errorText_(err);
+    return { ok: false, error: text + permissionHint_(text) };
   }
 }
 
@@ -124,7 +126,8 @@ function findTelegramChatIds() {
     data = JSON.parse(response.getContentText());
     if (!data.ok) failure = data.description || 'HTTP ' + response.getResponseCode();
   } catch (err) {
-    failure = scrubSecrets_(errorText_(err), [config.token]);
+    const text = errorText_(err);
+    failure = scrubSecrets_(text, [config.token]) + permissionHint_(text);
   }
   if (failure) {
     showAlert_('chat_id Telegram', ['Telegram не ответил: ' + failure]);
@@ -144,4 +147,35 @@ function findTelegramChatIds() {
     PropertiesService.getScriptProperties().setProperty(PROP_TELEGRAM_CHATS_, chats.map(function (c) { return c.id; }).join(','));
     getSpreadsheet_().toast('Сохранено. Проверьте: «🛒 Рынок → Отправить тестовое уведомление».', 'Готово', 8);
   }
+}
+
+// ===== Разрешения =====
+
+// Запускается вручную из редактора (выбрать функцию → «Выполнить»). При первом запуске после обновления
+// манифеста Google показывает окно с разрешениями; меню таблицы и веб-приложение такое окно не показывают.
+// Затем функция проверяет, что всё работает, и пишет итог в журнал и (если таблица открыта) окном.
+function authorize() {
+  const lines = ['Версия кода: ' + SCRIPT_VERSION_];
+  const check = function (label, fn) {
+    try {
+      lines.push('✅ ' + label + ': ' + fn());
+    } catch (err) {
+      lines.push('❌ ' + label + ': ' + errorText_(err));
+    }
+  };
+  check('Таблица', function () { return getSpreadsheet_().getName(); });
+  check('Запросы в интернет (Telegram)', function () {
+    return 'HTTP ' + UrlFetchApp.fetch('https://api.telegram.org/', { muteHttpExceptions: true }).getResponseCode();
+  });
+  check('Почта', function () { return 'можно отправить ещё ' + MailApp.getRemainingDailyQuota() + ' писем сегодня'; });
+  check('Триггеры', function () { return 'установлено ' + ScriptApp.getProjectTriggers().length; });
+  const config = getNotifyConfig_();
+  lines.push((config.token ? '✅' : '❌') + ' Свойство TELEGRAM_BOT_TOKEN: ' + (config.token ? 'задано' : 'не задано'));
+  lines.push((config.chatIds.length ? '✅' : '❌') + ' Свойство TELEGRAM_CHAT_IDS: ' + (config.chatIds.length ? 'получателей ' + config.chatIds.length : 'пусто (найдите через «🛒 Рынок → Найти chat_id Telegram»)'));
+  lines.push((config.email ? '✅' : '❌') + ' Свойство ALERT_EMAIL: ' + (config.email ? 'задано' : 'не задано'));
+  console.log(lines.join('\n'));
+  try {
+    showAlert_('Проверка разрешений', lines);
+  } catch (err) { /* таблица не открыта: итог остался в журнале */ }
+  return lines;
 }

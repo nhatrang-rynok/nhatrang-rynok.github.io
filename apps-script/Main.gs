@@ -2,6 +2,10 @@
  * Main.gs — точки входа веб-приложения (doGet, doPost), меню таблицы и запись ошибок.
  */
 
+// Версия кода: меняется при каждом изменении файлов в apps-script/. Видна в ответе ?action=ping и в окне authorize,
+// чтобы сразу понять, какой код сейчас работает.
+const SCRIPT_VERSION_ = '2026-10-12.2';
+
 const ERROR_LOG_KEEP_ = 500;     // сколько последних строк хранить в листе «Ошибки»
 const ERROR_LOG_TRIM_AT_ = 600;  // когда строк станет больше, старые удаляются
 
@@ -9,7 +13,7 @@ const ERROR_LOG_TRIM_AT_ = 600;  // когда строк станет боль�
 function doGet(e) {
   try {
     const action = e && e.parameter ? e.parameter.action : '';
-    if (action === 'ping') return jsonOut_({ ok: true, time: new Date().toISOString() });
+    if (action === 'ping') return jsonOut_({ ok: true, time: new Date().toISOString(), version: SCRIPT_VERSION_ });
     if (action === 'catalog') return jsonOut_(getCatalog_(false));
     return jsonOut_({ ok: false, error: 'UNKNOWN_ACTION', message: 'Неизвестное действие' });
   } catch (err) {

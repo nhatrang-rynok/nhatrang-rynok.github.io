@@ -688,3 +688,10 @@ test('товары: если есть название, но нет ID — эт�
   assert.match(cats.errors[0].message, /У категории «Без ID» пустой ID/);
   assert.equal(cats.errors[0].row, 2);
 });
+
+test('permissionHint_: подсказка только для ошибок про разрешения', () => {
+  assert.match(g.permissionHint_('У вас нет разрешения на вызов функции "MailApp.sendEmail". Требуемые разрешения: …'), /функцию authorize/);
+  assert.match(g.permissionHint_('You do not have permission to call UrlFetchApp.fetch'), /authorize/);
+  assert.equal(g.permissionHint_('Forbidden: bot was blocked by the user'), '');
+  assert.equal(g.permissionHint_(null), '');
+});

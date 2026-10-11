@@ -123,6 +123,7 @@ class FakeSpreadsheet {
     sheetNames.forEach(n => this.insertSheet(n));
   }
   getId() { return 'FAKE_SPREADSHEET_ID'; }
+  getName() { return 'Мой рынок'; }
   getUrl() { return 'https://docs.google.com/spreadsheets/d/FAKE_SPREADSHEET_ID/edit'; }
   getSheets() { return [...this.sheets]; }
   getSheetByName(name) { return this.sheets.find(s => s.name === name) ?? null; }
@@ -222,6 +223,7 @@ export function createGoogle({ sheetNames } = {}) {
       },
     },
     MailApp: {
+      getRemainingDailyQuota: () => 100 - mails.length,
       sendEmail: (to, subject, body) => {
         if (state.mailFails) throw new Error('Превышена суточная квота писем');
         mails.push({ to, subject, body });

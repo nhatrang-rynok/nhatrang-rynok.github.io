@@ -872,3 +872,10 @@ function emailStatusText_(email) {
   if (!email || !email.attempted) return 'почта (ALERT_EMAIL) не задана';
   return email.ok ? 'письмо отправлено' : 'письмо не отправлено: ' + email.error;
 }
+
+// Если ошибка вызвана отсутствием разрешений, подсказываем, что делать (Google пишет такие ошибки на языке аккаунта)
+function permissionHint_(text) {
+  return /разрешени|permission|authoriz|авторизаци/i.test(String(text == null ? '' : text))
+    ? ' Выдайте разрешения: в редакторе Apps Script выберите функцию authorize и нажмите «Выполнить».'
+    : '';
+}

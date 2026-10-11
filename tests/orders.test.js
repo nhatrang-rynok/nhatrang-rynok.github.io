@@ -512,3 +512,49 @@ test('лист «Ошибки» с длинной историей не лома
   e.g.logError_('где-то', 'новая запись');
   assert.ok(e.errors().some(t => t === 'где-то: новая запись'));
 });
+
+// ---------------------------------------------------------------- разрешения
+test('нет разрешений на Telegram и почту: в статусе подсказка, как их выдать', () => {
+  const e = env({ chats: '111111111' });
+  const denied = fn => { throw new Error(`У вас нет разрешения на вызов функции "${fn}". Требуемые разрешения: https://www.googleapis.com/auth/script.x`); };
+  e.google.state.fetchHandler = () => denied('UrlFetchApp.fetch');
+  e.google.state.mailFails = true;
+  e.g.run("MailApp.sendEmail = () => { throw new Error('У вас нет разрешения на вызов функции \"MailApp.sendEmail\".'); }");
+  const r = e.post(e.order());
+  assert.equal(r.ok, true, 'заказ принят');
+  const status = e.row('Заказы', 1)['Уведомление'];
+  assert.match(status, /UrlFetchApp\.fetch/);
+  assert.match(status, /письмо не отправлено: .*функцию authorize/);
+  assert.equal((status.match(/функцию authorize/g) || []).length, 2, 'подсказка и у Telegram, и у письма');
+});
+
+test('findTelegramChatIds без разрешения: подсказка про authorize', () => {
+  const e = env();
+  e.google.state.fetchHandler = () => { throw new Error('У вас нет разрешения на вызов функции "UrlFetchApp.fetch".'); };
+  e.g.findTelegramChatIds();
+  assert.match(e.google.alerts.at(-1).message, /функцию authorize/);
+});
+
+test('authorize: итог проверки разрешений и свойств, версия кода', () => {
+  const e = env({ chats: '' });
+  const lines = plain(e.g.authorize());
+  assert.match(lines[0], /^Версия кода: \d{4}-\d\d-\d\d\.\d+$/);
+  assert.ok(lines.some(l => l.startsWith('✅ Таблица: ')));
+  assert.ok(lines.some(l => l.startsWith('✅ Запросы в интернет (Telegram): HTTP 200')));
+  assert.ok(lines.some(l => l.startsWith('✅ Почта: можно отправить ещё 100 писем')));
+  assert.ok(lines.some(l => l.startsWith('✅ Свойство TELEGRAM_BOT_TOKEN')));
+  assert.ok(lines.some(l => l.startsWith('❌ Свойство TELEGRAM_CHAT_IDS: пусто')));
+  assert.ok(lines.some(l => l.startsWith('✅ Свойство ALERT_EMAIL')));
+  assert.equal(e.google.alerts.at(-1).title, 'Проверка разрешений');
+  assert.ok(!JSON.stringify(lines).includes(TOKEN), 'токен не показывается');
+});
+
+test('authorize: без разрешений показывает, что именно не работает, и не падает', () => {
+  const e = env();
+  e.google.state.fetchHandler = () => { throw new Error('нет разрешения на UrlFetchApp'); };
+  e.g.run("MailApp.getRemainingDailyQuota = () => { throw new Error('нет разрешения на MailApp'); }");
+  const lines = plain(e.g.authorize());
+  assert.ok(lines.some(l => l.startsWith('❌ Запросы в интернет (Telegram): нет разрешения')));
+  assert.ok(lines.some(l => l.startsWith('❌ Почта: нет разрешения')));
+  assert.ok(lines.some(l => l.startsWith('✅ Таблица')));
+});

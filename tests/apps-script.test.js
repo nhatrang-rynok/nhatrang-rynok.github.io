@@ -162,6 +162,7 @@ test('doGet: ping и неизвестное действие', () => {
   const ping = e.get('ping');
   assert.equal(ping.ok, true);
   assert.ok(!Number.isNaN(Date.parse(ping.time)));
+  assert.match(ping.version, /^\d{4}-\d\d-\d\d\.\d+$/, 'в ответе ping есть версия кода');
   assert.equal(e.get('что-то').error, 'UNKNOWN_ACTION');
   assert.equal(JSON.parse(e.g.doGet({}).getContent()).error, 'UNKNOWN_ACTION');
   assert.equal(JSON.parse(e.g.doGet().getContent()).error, 'UNKNOWN_ACTION');
@@ -485,4 +486,24 @@ test('setup: на листах с FALSE в пустых строках ниче�
   assert.equal(cats.get(4, 2), true);
   const settings = e.sheet('Настройки');
   assert.equal(settings.count(), 13, 'настройки не продублированы');
+});
+
+test('каждый .gs файл начинается со своего имени (по нему владелец проверяет, что вставил нужный код)', () => {
+  for (const file of FILES) {
+    const lines = readFileSync(new URL(`../apps-script/${file}`, import.meta.url), 'utf8').split('\n');
+    assert.equal(lines[0], '/**', `${file}: первая строка`);
+    assert.ok(lines[1].startsWith(` * ${file} — `), `${file}: вторая строка начинается с « * ${file} — »`);
+  }
+});
+
+test('имена верхнего уровня не повторяются между файлами (так на настоящем проекте не бывает «already declared»)', () => {
+  const owners = new Map();
+  for (const file of FILES) {
+    const code = readFileSync(new URL(`../apps-script/${file}`, import.meta.url), 'utf8');
+    for (const m of code.matchAll(/^(?:const|let|var|function)\s+([A-Za-z0-9_$]+)/gm)) {
+      assert.ok(!owners.has(m[1]), `«${m[1]}» объявлено и в ${owners.get(m[1])}, и в ${file}`);
+      owners.set(m[1], file);
+    }
+  }
+  assert.equal(owners.get('HEADER_COLOR_'), 'Setup.gs');
 });
