@@ -26,11 +26,12 @@ function logEvent_(level, event, details, opts) {
   } catch (err) { /* журнал не важнее самого действия */ }
 }
 
-// Записывает накопленные события в лист «Журнал». Возвращает, сколько строк записано.
+// Записывает накопленные события в лист «Журнал»: новые строки встают сверху, под заголовком (самое свежее — первым).
+// Возвращает, сколько строк записано.
 function flushLog_() {
   if (LOG_BUFFER_.length === 0) return 0;
-  // События с сайта приходят с прошлым временем: в таблицу кладём по порядку времени
-  const entries = LOG_BUFFER_.splice(0, LOG_BUFFER_.length).sort(function (a, b) { return a.ms - b.ms; }).slice(-LOG_MAX_PER_FLUSH_);
+  // События с сайта приходят с прошлым временем: внутри пачки сортируем от новых к старым
+  const entries = LOG_BUFFER_.splice(0, LOG_BUFFER_.length).sort(function (a, b) { return a.ms - b.ms; }).reverse().slice(0, LOG_MAX_PER_FLUSH_);
   let locked = false;
   const lock = LockService.getScriptLock();
   try {
@@ -49,13 +50,16 @@ function flushLog_() {
         return typeof cell === 'string' ? sanitizeCell_(scrubSecrets_(cell, secrets)) : cell;
       });
     });
-    const first = Math.max(sheet.getLastRow(), 1) + 1;
-    ensureRows_(sheet, first + rows.length - 1);
-    sheet.getRange(first, 1, rows.length, headers.length).setValues(rows);
+    // Вставляем пустые строки сразу под заголовком и пишем в них: так не нужно сдвигать старые записи вручную
+    const lastBefore = Math.max(sheet.getLastRow(), 1);
+    sheet.insertRowsBefore(2, rows.length);
+    const inserted = sheet.getRange(2, 1, rows.length, headers.length);
+    inserted.clearFormat(); // новые строки не должны унаследовать оформление заголовка
+    inserted.setValues(rows);
     const timeColumn = headers.map(normalizeHeader_).indexOf(normalizeHeader_('Время')) + 1;
-    if (timeColumn) sheet.getRange(first, timeColumn, rows.length, 1).setNumberFormat(DATE_FORMAT_);
-    const last = first + rows.length - 1;
-    if (last > LOG_TRIM_AT_) sheet.deleteRows(2, last - LOG_KEEP_ - 1);
+    if (timeColumn) sheet.getRange(2, timeColumn, rows.length, 1).setNumberFormat(DATE_FORMAT_);
+    const total = lastBefore + rows.length;
+    if (total > LOG_TRIM_AT_) sheet.deleteRows(LOG_KEEP_ + 2, total - LOG_KEEP_ - 1); // старые записи — внизу
     return rows.length;
   } catch (err) {
     console.error('Не удалось записать в лист «Журнал»: ' + errorText_(err));

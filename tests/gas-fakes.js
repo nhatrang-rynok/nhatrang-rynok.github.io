@@ -36,6 +36,7 @@ class FakeRange {
     return this;
   }
   setValue(v) { this.sheet.set(this.row, this.col, v); return this; }
+  clearFormat() { this.sheet.formats = this.sheet.formats.filter(f => f.col < this.col || f.col > this.col + this.cols - 1); return this; }
   setFontWeight() { return this; }
   setFontColor() { return this; }
   setBackground() { return this; }
@@ -90,6 +91,10 @@ class FakeSheet {
   }
   getMaxRows() { return this.maxRows; }
   insertRowsAfter(position, count) { this.maxRows += count; }
+  insertRowsBefore(position, count) {
+    this.grid.splice(position - 1, 0, ...Array.from({ length: count }, () => []));
+    this.maxRows += count;
+  }
   getRange(row, col, rows = 1, cols = 1) { return new FakeRange(this, row, col, rows, cols); }
   getDataRange() {
     const rows = this.getLastRow();

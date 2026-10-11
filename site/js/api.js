@@ -118,10 +118,22 @@ const ORDER_TIMEOUT_MS = 15000;
 export async function sendOrder(payload) {
   if (isMockMode) return mockSendOrder(payload);
   track('order', `отправка заказа: позиций ${payload.items.length}, сумма ≈ ${payload.clientTotal} ₽`);
-  const result = await postOrder(payload);
-  track('order', result.ok ? `заказ принят${result.duplicate ? ' (повтор, дубль не создан)' : ''}` : `заказ не принят: ${result.error}${result.network ? ' (нет связи)' : ''}`,
+  const started = Date.now();
+  let result = await postOrder(payload);
+  if (!result.ok && result.network) {
+    // На некоторых телефонах ответ Apps Script не доходит до страницы, хотя заказ уже записан: спрашиваем у сервера отдельно
+    track('order', `ответ не получен (${result.reason}) через ${Date.now() - started} мс; ${connectionInfo()}; проверяю, принят ли заказ`);
+    const recovered = await checkOrderStatus(payload.clientOrderId);
+    if (recovered) result = recovered;
+  }
+  track('order', result.ok ? `заказ принят${result.duplicate ? ' (повтор, дубль не создан)' : ''}${result.recovered ? ' (подтверждён отдельной проверкой)' : ''}` : `заказ не принят: ${result.error}${result.network ? ' (нет связи)' : ''}`,
     result.ok ? String(result.orderNo || '').replace(/[^A-Za-z0-9-]/g, '').slice(0, 12) : '');
   return result;
+}
+
+function connectionInfo() {
+  const c = globalThis.navigator?.connection;
+  return `онлайн: ${globalThis.navigator?.onLine}${c ? `, сеть: ${c.effectiveType || '?'}${c.saveData ? ', экономия трафика' : ''}` : ''}`;
 }
 
 async function postOrder(payload) {
@@ -138,11 +150,30 @@ async function postOrder(payload) {
     const data = await res.json();
     if (data && typeof data.ok === 'boolean') return data;
     return { ok: false, error: 'SERVER' };
-  } catch {
-    return { ok: false, error: 'SERVER', network: true };
+  } catch (err) {
+    return { ok: false, error: 'SERVER', network: true, reason: `${err?.name || 'Error'}: ${String(err?.message || '').slice(0, 60)}` };
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Два вопроса с паузой: сервер мог ещё не закончить запись. Возвращает ответ «принят» или null.
+const STATUS_DELAYS_MS = [0, 2000];
+
+async function checkOrderStatus(clientOrderId) {
+  for (const delay of STATUS_DELAYS_MS) {
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const res = await fetch(`${API_URL}?action=orderStatus&id=${encodeURIComponent(clientOrderId)}`, { signal: controller.signal });
+      const data = await res.json();
+      if (data?.ok === true && data.found === true && data.orderNo) return { ok: true, orderNo: data.orderNo, total: data.total, duplicate: false, recovered: true };
+    } catch { /* связи нет и для этого вопроса */ } finally {
+      clearTimeout(timer);
+    }
+  }
+  return null;
 }
 
 // Режим заглушки: заказ никуда не уходит. Сценарии ошибок включаются адресом: ?mock=error|paused|rate|unavailable|validation

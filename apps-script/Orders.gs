@@ -87,6 +87,22 @@ function handleOrder_(body) {
   return { ok: true, orderNo: saved.orderNo, total: order.total, duplicate: false };
 }
 
+// GET ?action=orderStatus&id=<clientOrderId>: принят ли заказ. Нужен сайту, когда ответ на POST не дошёл до браузера
+// (на некоторых телефонах ответ Apps Script не читается, хотя заказ уже записан). Номер знает только тот, кто отправил заказ.
+function handleOrderStatus_(id) {
+  const clientOrderId = typeof id === 'string' ? id : '';
+  if (!CLIENT_ORDER_ID_RE_.test(clientOrderId)) return { ok: false, error: 'VALIDATION', message: 'Неверный запрос', fields: {}, items: [] };
+  const earlier = CacheService.getScriptCache().get('ord_' + clientOrderId);
+  let found = null;
+  if (earlier) {
+    try {
+      found = JSON.parse(earlier);
+    } catch (err) { /* битая запись — считаем, что заказа нет */ }
+  }
+  logEvent_('info', 'Проверка заказа', found ? 'найден, ответ на отправку не дошёл до гостя' : 'не найден', { order: found ? found.orderNo : '' });
+  return found ? { ok: true, found: true, orderNo: found.orderNo, total: found.total } : { ok: true, found: false };
+}
+
 // Выполняется под блокировкой. Возвращает { reply } (дубль или лимит) либо данные записанного заказа.
 function saveOrder_(order) {
   const cache = CacheService.getScriptCache();

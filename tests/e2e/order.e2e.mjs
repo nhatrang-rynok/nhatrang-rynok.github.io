@@ -16,6 +16,7 @@ let calls = [];           // полученные заказы
 const logCalls = [];      // пачки событий журнала
 let catalogPatch = d => d;
 const api = async (req, body) => {
+  if (req.method === 'GET' && new URL(req.url, 'http://x').searchParams.get('action') === 'orderStatus') return { json: { ok: true, found: false } };
   if (req.method === 'GET') {
     const data = structuredClone(sample);
     catalogPatch(data);

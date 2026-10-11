@@ -22,7 +22,8 @@ function env({ chats = '111111111' } = {}) {
   const log = () => {
     const s = google.ss.getSheetByName('Журнал');
     const headers = s.values()[0];
-    return s.values().slice(1).map(r => Object.fromEntries(headers.map((h, i) => [h, r[i]])));
+    // В листе новые строки сверху; для проверок порядка событий отдаём от старых к новым
+    return s.values().slice(1).map(r => Object.fromEntries(headers.map((h, i) => [h, r[i]]))).reverse();
   };
   const clearLog = () => google.ss.getSheetByName('Журнал').deleteRows(2, 100000);
   const post = body => JSON.parse(g.doPost({ postData: { contents: JSON.stringify(body) } }).getContent());
@@ -196,7 +197,9 @@ test('журнал: старые строки удаляются, сбой бл�
   for (let r = 2; r <= trimAt + 1; r++) sheet.grid[r - 1] = [new Date(r), 'инфо', 'Сервер', 'старое', '', '', '', '', ''];
   e.g.doGet({ parameter: { action: 'ping' } });
   assert.ok(sheet.count() <= keep + 5 && sheet.count() >= keep - 5, `строк: ${sheet.count()}`);
-  assert.equal(sheet.values().at(-1)[3], 'Проверка связи (ping)');
+  assert.equal(sheet.values()[1][3], 'Проверка связи (ping)', 'свежая запись — сверху');
+  assert.equal(sheet.values().at(-1)[3], 'старое', 'внизу остались самые старые из оставшихся');
+  assert.equal(sheet.values()[0][0], 'Время', 'заголовок на месте');
 
   e.google.state.lockFails = true;
   assert.equal(JSON.parse(e.g.doGet({ parameter: { action: 'ping' } }).getContent()).ok, true);
@@ -212,4 +215,47 @@ test('authorize и «Проверить разрешения» оставляю�
   const list = names(e.log());
   assert.ok(list.includes('Проверка разрешений'));
   assert.ok(list.includes('Меню: проверка разрешений'));
+});
+
+test('журнал: новые записи сверху, под заголовком, внутри пачки от новых к старым', () => {
+  const e = env();
+  e.g.doGet({ parameter: { action: 'ping' } });
+  e.post(e.batch([{ t: 999_000, k: 'visit' }, { t: 999_900, k: 'view', d: '#/' }]));
+  e.g.doGet({ parameter: { action: 'ping' } });
+  const sheet = e.ss.getSheetByName('Журнал');
+  const rows = sheet.values();
+  assert.equal(rows[0][0], 'Время');
+  const times = rows.slice(1).map(r => r[0].getTime());
+  assert.ok(times.length >= 4);
+  // порядок убывает (допускаем равные значения в одну миллисекунду)
+  for (let i = 1; i < times.length; i++) assert.ok(times[i - 1] >= times[i] - 1000, `строка ${i + 1} не новее строки ${i + 2}`);
+  assert.equal(rows[1][3], 'Проверка связи (ping)', 'самая свежая запись — сразу под заголовком');
+  const site = rows.filter(r => r[2] === 'Сайт').map(r => r[3]);
+  assert.deepEqual(site, ['Открыт экран', 'Вход на сайт'], 'внутри пачки новое выше старого');
+  assert.ok(sheet.formats.some(f => f.col === 1 && f.format === 'yyyy-mm-dd hh:mm:ss'));
+});
+
+// ---------------------------------------------------------------- проверка заказа (ответ на POST не дошёл до телефона)
+const status = (e, id) => JSON.parse(e.g.doGet({ parameter: { action: 'orderStatus', id } }).getContent());
+
+test('orderStatus: принятый заказ находится по clientOrderId, чужой и неверный — нет', () => {
+  const e = env();
+  const o = e.order();
+  const r = e.post(o);
+  assert.deepEqual(status(e, o.clientOrderId), { ok: true, found: true, orderNo: r.orderNo, total: r.total });
+  assert.deepEqual(status(e, 'never-sent-order-id'), { ok: true, found: false });
+  assert.equal(status(e, 'x').ok, false);
+  assert.equal(status(e, undefined).error, 'VALIDATION');
+  assert.ok(names(e.log()).includes('Проверка заказа'));
+});
+
+test('orderStatus: отказанный заказ не считается принятым; в ответе нет персональных данных', () => {
+  const e = env();
+  const bad = e.order({ phone: '123' });
+  e.post(bad);
+  assert.equal(status(e, bad.clientOrderId).found, false);
+  const ok = e.order();
+  e.post(ok);
+  const text = JSON.stringify(status(e, ok.clientOrderId));
+  assert.ok(!text.includes('84 000') && !text.includes('Ольга'));
 });

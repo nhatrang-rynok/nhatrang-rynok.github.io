@@ -21,7 +21,7 @@ google.props.set('TELEGRAM_CHAT_IDS', '111111111');
 const sheet = name => google.ss.getSheetByName(name);
 
 const api = async (req, body, url) => {
-  if (req.method === 'GET') return { json: JSON.parse(g.doGet({ parameter: { action: url.searchParams.get('action') } }).getContent()) };
+  if (req.method === 'GET') return { json: JSON.parse(g.doGet({ parameter: Object.fromEntries(url.searchParams) }).getContent()) };
   return { json: JSON.parse(g.doPost({ postData: { contents: body } }).getContent()) };
 };
 const config = 'export const API_URL = "__BASE__api";\nexport const SITE_TITLE = "Рынок у отеля";\nexport const FALLBACK_CONTACTS = { phone: "+84 000 000 000", whatsapp: "84000000000", telegram: "primer_operator" };\nexport const APP_VERSION = "test";\n';
@@ -111,7 +111,8 @@ const card = (page, name) => page.locator('.list .card').filter({ has: page.loca
   await ctx.close();
 }
 
-// ---- 4. Повторная отправка после обрыва связи не создаёт дубль
+// ---- 4. Ответ на заказ не дошёл до браузера (так было на телефоне с Яндекс.Браузером)
+// 4а. Отдельная проверка «принят ли заказ» работает: гость сразу видит «принят», дубля нет
 {
   const { ctx, page } = await open();
   await page.goto(base + '#/c/fruits');
@@ -122,7 +123,7 @@ const card = (page, name) => page.locator('.list .card').filter({ has: page.loca
   await page.fill('#f-phone', '+84 000 000 777');
   let drop = true;
   await page.route('**/api', route => {
-    if (route.request().method() === 'POST' && drop) {
+    if (route.request().method() === 'POST' && !route.request().postData().includes('"action":"log"') && drop) {
       drop = false;
       // Сервер принял заказ, но ответ до гостя не дошёл
       route.fetch().then(() => route.abort('internetdisconnected'));
@@ -132,11 +133,48 @@ const card = (page, name) => page.locator('.list .card').filter({ has: page.loca
   });
   const before = sheet('Заказы').count();
   await page.click('button[type="submit"]');
-  await page.waitForSelector('#failure');
+  await waitH1(page, 'принят');
+  check(sheet('Заказы').count() === before + 1, 'заказ принят один раз, гость увидел «принят» без повторной отправки');
+  check(google.fetches.length === 3, `в Telegram ушло одно сообщение на заказ (${google.fetches.length} всего)`);
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  await page.waitForTimeout(500);
+  const jr = sheet('Журнал').values();
+  check(jr.some(r => r[3] === 'Проверка заказа' && /найден/.test(r[4])), 'в «Журнале»: сервер отметил проверку заказа');
+  check(jr.some(r => r[3] === 'Заказ (сайт)' && /ответ не получен.*Failed to fetch|ответ не получен/.test(r[4])), 'в «Журнале»: причина обрыва записана для разбора');
+  await ctx.close();
+}
+
+// 4б. Не работает и проверка: гость видит ошибку, «Попробовать ещё раз» не создаёт дубль
+{
+  const { ctx, page } = await open();
+  await page.goto(base + '#/c/fruits');
+  await page.waitForSelector('.card');
+  await card(page, 'Манго').locator('.qty__add').click();
+  await page.goto(base + '#/checkout');
+  await page.waitForSelector('#f-phone');
+  await page.fill('#f-phone', '+84 000 000 778');
+  let dropPost = true;
+  let blockStatus = true;
+  await page.route('**/api**', route => {
+    const req = route.request();
+    if (req.method() === 'POST' && !req.postData().includes('"action":"log"') && dropPost) {
+      dropPost = false;
+      route.fetch().then(() => route.abort('internetdisconnected'));
+      return;
+    }
+    if (req.method() === 'GET' && req.url().includes('action=orderStatus') && blockStatus) {
+      route.abort('internetdisconnected');
+      return;
+    }
+    route.continue();
+  });
+  const before = sheet('Заказы').count();
+  await page.click('button[type="submit"]');
+  await page.waitForSelector('#failure', { timeout: 20000 });
+  blockStatus = false;
   await page.getByRole('button', { name: 'Попробовать ещё раз' }).click();
   await waitH1(page, 'принят');
-  check(sheet('Заказы').count() === before + 1, 'заказ принят один раз, хотя гость отправлял дважды');
-  check(google.fetches.length === 3, `в Telegram ушло одно сообщение на заказ (${google.fetches.length} всего)`);
+  check(sheet('Заказы').count() === before + 1, 'нет ни ответа, ни проверки: после «Попробовать ещё раз» заказ всё равно один');
   await ctx.close();
 }
 
