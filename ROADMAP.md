@@ -48,9 +48,9 @@
 
 Цель: сайт читает каталог из таблицы, заказы попадают в таблицу и в Telegram.
 
-- [ ] **T2.1** 🤖 (high) `Logic.gs` (все чистые функции из `docs/07-apps-script.md`) + `tests/logic.test.js`.
+- [x] **T2.1** 🤖 (high) `Logic.gs` (все чистые функции из `docs/07-apps-script.md`) + `tests/logic.test.js`.
   *Приёмка:* тесты покрывают нормализацию телефона, валидацию заказа, расчёт цены, популярное, экранирование, защиту от формул; `node --test` зелёный.
-- [ ] **T2.2** 🤖 (high) `appsscript.json`, `Setup.gs` (setup, меню, триггеры, handleEdit), `Catalog.gs` (чтение по заголовкам, валидация строк, кэш по кускам), `Main.gs` (doGet: ping, catalog). Раздел «Как развернуть».
+- [x] **T2.2** 🤖 (high) `appsscript.json`, `Setup.gs` (setup, меню, триггеры, handleEdit), `Catalog.gs` (чтение по заголовкам, валидация строк, кэш по кускам), `Main.gs` (doGet: ping, catalog). Раздел «Как развернуть».
   *Приёмка (владелец):* после развертывания `?action=ping` и `?action=catalog` отвечают; `setup()` создаёт все листы со списками и флажками; повторный `setup()` ничего не дублирует.
 - [ ] **T2.3** 👤 Развернуть по `docs/08-deploy-apps-script.md` (шаги 3–4, 7). Перенести в «Товары» позиции из `catalog.sample.json` (Claude в T2.2 кладёт их в `content/descriptions/sample-products.csv` для импорта). Прислать URL в сессию.
 - [ ] **T2.4** 🤖 (high) `Orders.gs`, `Notify.gs`, doPost: валидация, идемпотентность, лимиты, номер заказа, запись, Telegram + запасное письмо, `testNotify`, `findTelegramChatIds`. Раздел «Как развернуть».

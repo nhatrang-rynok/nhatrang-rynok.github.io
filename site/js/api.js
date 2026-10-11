@@ -27,8 +27,9 @@ function isValidCatalog(c) {
     && c.settings != null && typeof c.settings === 'object';
 }
 
-// Версия и время сборки меняются сами по себе, поэтому сравниваем только содержимое.
-const signature = c => JSON.stringify({ ...c, generatedAt: null });
+// В «version» и «generatedAt» есть время сборки, они меняются при каждой пересборке на сервере
+// (раз в 5 минут), даже если данные те же. Поэтому сравниваем только содержимое.
+const signature = c => JSON.stringify({ ...c, generatedAt: null, version: null });
 
 async function fetchCatalog() {
   const url = isMockMode ? SAMPLE_URL : `${API_URL}?action=catalog`;

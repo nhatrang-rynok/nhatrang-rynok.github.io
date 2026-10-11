@@ -7,26 +7,26 @@
 | Файл | Содержимое |
 |---|---|
 | `appsscript.json` | Манифест: `timeZone: "Asia/Ho_Chi_Minh"`, `runtimeVersion: "V8"`, `webapp: {executeAs: "USER_DEPLOYING", access: "ANYONE_ANONYMOUS"}`, явный список `oauthScopes` (ниже), `exceptionLogging: "STACKDRIVER"` |
-| `Main.gs` | `doGet(e)`, `doPost(e)`, `jsonOut_(obj)`, `onOpen()` (меню) |
-| `Catalog.gs` | `getCatalog_()`, `buildCatalog_()`, `readSheetAsObjects_(name)`, кэш с разбиением на части, `clearCatalogCache()` |
+| `Main.gs` | `doGet(e)`, `doPost(e)`, `jsonOut_(obj)`, `onOpen()` (меню), `logError_` / `logErrors_` (лист «Ошибки») |
+| `Catalog.gs` | `getCatalog_()`, `rebuildCatalog_()`, чтение листов, кэш кусками (свежий на 5 минут и «последний хороший» на 6 часов), `clearCatalogCache()`, запись проблем таблицы в «Ошибки» |
 | `Orders.gs` | `handleOrder_(body)`, лимиты, идемпотентность, счётчик номеров, запись строк |
 | `Notify.gs` | `notifyOrder_(order)`, `sendTelegram_(text)`, `sendMailFallback_(subject, body)`, `testNotify()` |
 | `Photos.gs` | `syncPhotos()` |
 | `Setup.gs` | `setup()`, `installTriggers_()`, `handleEdit(e)`, `findTelegramChatIds()` |
-| `Logic.gs` | Чистые функции без сервисов Google: `normalizePhone_`, `validateOrder_`, `computeRubPrice_`, `computePopular_`, `parseRelated_`, `escapeHtml_`, `sanitizeCell_`, `buildOrderText_` |
+| `Logic.gs` | Чистые функции без сервисов Google: схема листов и настройки по умолчанию, `normalizePhone_` / `checkPhone_`, `computeRubPrice_`, `parseRelated_`, `photoUrl_`, `assembleCatalog_` (разбор таблицы в каталог), `computePopular_`, `validateOrder_`, `buildOrderText_` / `buildOrderButtons_` / `buildOrderComposition_`, `escapeHtml_`, `sanitizeCell_` |
 
 ## Scopes (`oauthScopes`)
 
-```
-https://www.googleapis.com/auth/spreadsheets.currentonly   таблица, к которой привязан скрипт
-https://www.googleapis.com/auth/drive                      папка с фото: поиск файлов и доступ по ссылке
-https://www.googleapis.com/auth/script.external_request    Telegram API
-https://www.googleapis.com/auth/script.send_mail           запасные письма
-https://www.googleapis.com/auth/script.scriptapp           установка триггеров
-https://www.googleapis.com/auth/script.container.ui        меню в таблице
-```
+Разрешения добавляются по мере появления кода, который в них нуждается. Каждое добавление указывается в «Как развернуть»: владельцу нужно заново подтвердить разрешения.
 
-Если добавляется новый scope, это обязательно указывается в «Как развернуть»: владельцу нужно будет заново выдать разрешения.
+| Scope | С какой задачи | Зачем |
+|---|---|---|
+| `spreadsheets.currentonly` | T2.2 | таблица, к которой привязан скрипт |
+| `script.scriptapp` | T2.2 | установка триггера на правки |
+| `script.container.ui` | T2.2 | меню и окна в таблице |
+| `script.external_request` | T2.4 | Telegram API |
+| `script.send_mail` | T2.4 | запасные письма |
+| `drive` | T3.1 | папка с фото: поиск файлов и доступ по ссылке |
 
 ## Script Properties (секреты и служебные значения)
 
@@ -37,6 +37,8 @@ https://www.googleapis.com/auth/script.container.ui        меню в табл�
 | `ALERT_EMAIL` | владелец | Почта для запасных уведомлений и ошибок |
 | `PHOTOS_FOLDER_ID` | `setup()` | ID папки «Фото товаров» (создаётся, если нет, **как подпапка той папки, где лежит таблица**) |
 | `ORDER_SEQ` | скрипт | Последний номер заказа |
+| `SPREADSHEET_ID` | `setup()` | ID таблицы (запасной путь, если `getActiveSpreadsheet()` вернёт пусто) |
+| `CATALOG_ERRORS_SIG` | скрипт | Отпечаток последнего набора проблем таблицы: одна и та же проблема пишется в «Ошибки» один раз |
 
 ## `doGet(e)`
 
@@ -50,7 +52,7 @@ https://www.googleapis.com/auth/script.container.ui        меню в табл�
 - Строки валидируются по правилам из `04-google-sheet.md`.
 - Ссылка на фото: если в `Фото` лежит ID файла (25+ символов `[A-Za-z0-9_-]`) или ссылка Диска — извлечь ID и превратить в `https://lh3.googleusercontent.com/d/<ID>`. Если это любая другая `https://` ссылка — отдать как есть.
 - `version` = ISO-время сборки + `#` + первые 6 символов MD5 от JSON (`Utilities.computeDigest`).
-- Кэш: `CacheService.getScriptCache()`, TTL 300 с. Ограничение 100 КБ на значение → JSON режется на куски по 90 000 символов: `cat_v1_meta` = `{parts, version}`, `cat_v1_0…N`. Читаем через `getAll`, если какого-то куска нет — пересобираем.
+- Кэш: `CacheService.getScriptCache()`, TTL 300 с. Ограничение 100 КБ на значение → JSON режется на куски по 30 000 символов (кириллица в кэше занимает 2–3 байта на знак, а предел — 100 КБ на значение): `cat_v1_meta` = `{parts}`, `cat_v1_0…N`. Читаем через `getAll`, если какого-то куска нет — пересобираем. Рядом (`cat_v1_good_*`, 6 часов) лежит копия «последнего хорошего» каталога: если в таблице сломали обязательные заголовки, сайт получает её, а не пустой каталог.
 - `clearCatalogCache()` удаляет meta (без meta кэш считается пустым).
 
 ## `doPost(e)`
@@ -114,9 +116,12 @@ https://www.googleapis.com/auth/script.container.ui        меню в табл�
 - Создать недостающие листы и заголовки; закрепить первую строку; защитить заголовки (режим «предупреждение»).
 - Выпадающие списки: `Категория` (диапазон ID категорий), `Наличие`, `Статус`, `Связь`. Флажки: `Показывать`, `18+`, `Хит`.
 - Условное форматирование «Заказов» по статусу.
-- Начальные данные «Категорий» и «Настроек», **если листы пустые**. Существующие значения не перезаписывать.
-- Создать папку «Фото товаров» (если нет `PHOTOS_FOLDER_ID`) внутри папки, где лежит таблица (`DriveApp.getFileById(ssId).getParents()`), открыть к ней одной доступ по ссылке (читатель), сохранить ID. Доступ ко всей родительской папке и к таблице не менять.
-- Установить триггеры (удалив старые с тем же обработчиком): `handleEdit` (по изменению таблицы), `syncPhotos` (каждые 10 минут).
+- Начальные данные: «Категории» — только если лист пуст; «Настройки» — добавляются недостающие ключи, существующие значения не трогаются.
+- Колонки ищутся по заголовку: переставленные колонки остаются на местах, удалённые обязательные дописываются в конец, свои колонки не мешают.
+- *(T3.1)* Создать папку «Фото товаров» (если нет `PHOTOS_FOLDER_ID`) внутри папки, где лежит таблица (`DriveApp.getFileById(ssId).getParents()`), открыть к ней одной доступ по ссылке (читатель), сохранить ID. Доступ ко всей родительской папке и к таблице не менять.
+- Установить триггеры (удалив старые с тем же обработчиком): `handleEdit` (по правке таблицы). *(T3.1)* `syncPhotos` (каждые 10 минут).
+- Часовой пояс таблицы выставляется в `Asia/Ho_Chi_Minh`, в свойства записывается `SPREADSHEET_ID`.
+- Лист по умолчанию («Лист1», «Sheet1») удаляется, только если он пустой.
 - В конце показать окно со сводкой: что создано, ссылка на папку с фото, чего не хватает в Script Properties.
 
 ## `handleEdit(e)` — установленный триггер
@@ -126,14 +131,20 @@ https://www.googleapis.com/auth/script.container.ui        меню в табл�
 ## Меню «🛒 Рынок» (`onOpen`)
 
 - Обновить сайт сейчас → `clearCatalogCache()`
-- Подтянуть фото → `syncPhotos()`
+- Подтянуть фото → `syncPhotos()` *(T3.1)*
 - Проверить таблицу → прогнать валидацию, показать список проблем
-- Отправить тестовое уведомление → `testNotify()`
-- Найти chat_id Telegram → `findTelegramChatIds()` (вызывает `getUpdates`, показывает найденные chat_id с именами)
+- Отправить тестовое уведомление → `testNotify()` *(T2.4)*
+- Найти chat_id Telegram → `findTelegramChatIds()` *(T2.4;* вызывает `getUpdates`, показывает найденные chat_id с именами)
 - Первоначальная настройка → `setup()`
 
 На телефоне меню Apps Script недоступно. Поэтому всё, что нужно Сане, работает автоматически через триггеры (кэш, фото). Меню нужно владельцу на компьютере.
 
 ## Тестируемость
 
-`Logic.gs` не обращается к сервисам Google. Тесты на Node (`tests/logic.test.js`) загружают файл через `vm.runInContext` и проверяют: нормализацию телефонов (`8 999…`, `+7 (999)…`, `+84 90…`, мусор), валидацию заказа (шаг, минимум, 18+, длины, дубли ID), расчёт рублёвой цены из донгов, «популярное», экранирование HTML, защиту от формул.
+`Logic.gs` не обращается к сервисам Google. Тесты на Node (`tests/logic.test.js`) загружают файл через `vm.runInContext` (`tests/gas-loader.js`) и проверяют: нормализацию телефонов (`8 999…`, `+7 (999)…`, `+84 90…`, мусор), валидацию заказа (шаг, минимум, 18+, длины, дубли ID), расчёт рублёвой цены из донгов, «популярное», экранирование HTML, защиту от формул.
+
+## Как это проверяется без Google
+
+- `tests/logic.test.js` — вся чистая логика, включая сверку проверки телефона с сайтом и сверку каталога, собранного из `content/descriptions/sample-products.csv`, с заглушкой сайта `catalog.sample.json`.
+- `tests/apps-script.test.js` — `Setup.gs`, `Catalog.gs` и `Main.gs` на подставных сервисах (`tests/gas-fakes.js`: таблица в памяти, кэш с лимитом 100 КБ, свойства, триггеры). Проверяется, что повторный `setup()` ничего не дублирует и не стирает, что кэш и «последний хороший» каталог работают, что ошибки пишутся один раз.
+- Чего тесты не покажут: настоящую выдачу разрешений, поведение веб-приложения под анонимным доступом и вид таблицы на телефоне. Это проверяет владелец по списку в `docs/08-deploy-apps-script.md`.
