@@ -77,12 +77,14 @@ img { max-width: 100%; display: block; }
 .app-header__title {
   flex: 1;
   min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   text-align: center;
   font-size: 20px;
   font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.15;
 }
 
 .icon-btn {
@@ -109,17 +111,17 @@ img { max-width: 100%; display: block; }
 
 .cart-link__count {
   position: absolute;
-  top: 2px;
-  right: 0;
-  min-width: 22px;
-  height: 22px;
+  top: 0;
+  right: -2px;
+  min-width: 24px;
+  height: 24px;
   padding: 0 6px;
-  border-radius: 11px;
+  border-radius: 12px;
   background: var(--danger);
   color: #fff;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
-  line-height: 22px;
+  line-height: 24px;
   text-align: center;
 }
 .cart-link__count[hidden] { display: none; }
@@ -324,7 +326,7 @@ img { max-width: 100%; display: block; }
   line-height: 1;
   cursor: pointer;
 }
-.qty__value { flex: 1; min-width: 0; text-align: center; font-weight: 700; white-space: nowrap; overflow: hidden; }
+.qty__value { flex: 1; min-width: 0; text-align: center; font-size: 17px; font-weight: 700; white-space: nowrap; overflow: hidden; }
 .qty__out { color: var(--text-muted); font-weight: 700; }
 .qty--compact .qty__add { padding: 8px 6px; font-size: 17px; }
 .qty--compact .qty__value { font-size: 17px; }
@@ -378,7 +380,7 @@ img { max-width: 100%; display: block; }
 }
 .cart-line__body { min-width: 0; }
 .cart-line__title { margin: 0 0 2px; font-size: 19px; text-wrap: balance; }
-.cart-line__title a { color: var(--text); text-decoration: none; }
+.cart-line__title a { display: block; margin: -12px 0; padding: 12px 0; color: var(--text); text-decoration: none; }
 .cart-line__price { margin: 0 0 8px; color: var(--text-muted); font-size: 16px; }
 .cart-line__row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; }
 .cart-line__row .qty { flex: 1 1 150px; max-width: 220px; }
@@ -427,7 +429,9 @@ textarea.input { min-height: 96px; resize: vertical; }
   align-items: center;
   justify-content: center;
   min-height: 52px;
-  padding: 8px 4px;
+  padding: 8px 2px;
+  font-size: 17px;
+  overflow-wrap: normal;
   border: 2px solid var(--accent);
   border-radius: var(--radius);
   background: var(--surface);
@@ -441,7 +445,7 @@ textarea.input { min-height: 96px; resize: vertical; }
 
 .check__row { display: flex; align-items: center; gap: 12px; min-height: var(--tap); }
 .check__input { flex: none; width: 28px; height: 28px; accent-color: var(--accent); }
-.check label { font-weight: 700; }
+.check label { display: flex; flex: 1; align-items: center; min-height: var(--tap); font-weight: 700; }
 
 /* Поле-ловушка для ботов: людям не видно и до него не добраться */
 .hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }

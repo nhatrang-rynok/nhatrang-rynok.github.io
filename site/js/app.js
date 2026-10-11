@@ -26,6 +26,7 @@ const root = document.getElementById('app');
 const backBtn = document.getElementById('back-btn');
 const headerTitle = document.getElementById('header-title');
 const cartCount = document.getElementById('cart-count');
+const cartLink = document.getElementById('cart-link');
 const cartBar = document.getElementById('cart-bar');
 const cartBarLink = document.getElementById('cart-bar-link');
 
@@ -58,6 +59,7 @@ function updateChrome() {
   const summary = cartSummary(getCart(), productMap(catalog));
   cartCount.textContent = String(summary.lines);
   cartCount.hidden = summary.lines === 0;
+  cartLink.setAttribute('aria-label', summary.lines ? `Корзина, ${formatItemsCount(summary.lines)}` : 'Корзина');
 
   const showBar = summary.lines > 0 && currentRoute && !ROUTES_WITHOUT_CART_BAR.has(currentRoute.name);
   cartBar.hidden = !showBar;

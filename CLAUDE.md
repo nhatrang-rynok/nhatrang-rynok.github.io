@@ -26,6 +26,7 @@ apps-script/           зеркало кода Google Apps Script (развёр�
   appsscript.json
   *.gs
 tests/                 тесты на Node без зависимостей (node --test); tests/e2e/ — проверки в браузере (*.e2e.mjs)
+tools/                 вспомогательные скрипты: картинки превью и иконки, Lighthouse, axe
 package.json           только для тестов: "type": "module", зависимостей нет
 .github/workflows/     деплой site/ на GitHub Pages
 content/               сбор контента: расшифровки, кандидаты, тексты
