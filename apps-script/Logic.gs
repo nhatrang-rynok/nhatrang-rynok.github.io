@@ -688,3 +688,168 @@ function buildOrderButtons_(order, sheetUrl) {
   if (sheetUrl) keyboard.push([{ text: 'Открыть таблицу', url: sheetUrl }]);
   return { inline_keyboard: keyboard };
 }
+
+// ===== Лимиты частоты заказов =====
+
+const RATE_PHONE_LIMIT_ = 3;                        // заказов с одного телефона…
+const RATE_PHONE_WINDOW_MS_ = 10 * 60 * 1000;       // …за 10 минут
+const RATE_GLOBAL_LIMIT_ = 60;                      // заказов всего…
+const RATE_GLOBAL_WINDOW_MS_ = 60 * 60 * 1000;      // …за час
+
+// Счётчик хранится в кэше строкой «число|время начала окна». Окно закончилось или записи нет — начинаем с нуля.
+function parseRateState_(raw, nowMs, windowMs) {
+  const m = /^(\d+)\|(\d+)$/.exec(String(raw == null ? '' : raw));
+  if (m) {
+    const t0 = Number(m[2]);
+    if (nowMs >= t0 && nowMs - t0 < windowMs) return { n: Number(m[1]), t0: t0 };
+  }
+  return { n: 0, t0: nowMs };
+}
+
+function serializeRateState_(state) {
+  return state.n + '|' + state.t0;
+}
+
+// Сколько секунд хранить счётчик (не меньше секунды и не больше 6 часов — предел кэша)
+function rateTtlSeconds_(state, nowMs, windowMs) {
+  return Math.max(1, Math.min(21600, Math.ceil((state.t0 + windowMs - nowMs) / 1000)));
+}
+
+// ===== Строки для листов «Заказы» и «Позиции заказов» =====
+
+// Значения собираются по заголовкам листа (колонки можно переставлять); текст проходит sanitizeCell_
+function alignRow_(headers, obj) {
+  const byKey = newMap_();
+  Object.keys(obj).forEach(function (k) { byKey[normalizeHeader_(k)] = obj[k]; });
+  return headers.map(function (h) {
+    const key = normalizeHeader_(h);
+    return key in byKey ? sanitizeCell_(byKey[key]) : '';
+  });
+}
+
+function orderRowObject_(order, orderNo, nowMs, notifyStatus) {
+  return {
+    'Номер': orderNo,
+    'Создан': new Date(nowMs),
+    'Статус': ORDER_STATUSES_[0],
+    'Телефон': order.phone,
+    'Связь': MESSENGER_LABELS_[order.messenger],
+    'Имя': order.name,
+    'Комната': order.room,
+    'Комментарий': order.comment,
+    'Состав': buildOrderComposition_(order),
+    'Сумма ₽': order.total,
+    '18+ подтверждено': order.hasAdult ? order.adultConfirmed : '',
+    'Уведомление': notifyStatus,
+    'ID клиента': order.clientOrderId,
+    'Заметки': '',
+  };
+}
+
+function orderItemRowObjects_(order, orderNo, nowMs) {
+  return order.items.map(function (l) {
+    return {
+      'Номер заказа': orderNo,
+      'Создан': new Date(nowMs),
+      'ID товара': l.id,
+      'Название': l.name,
+      'Кол-во': l.qty,
+      'Цена ₽': l.price,
+      'Сумма ₽': l.sum,
+      'Отменён': false,
+    };
+  });
+}
+
+// Самый большой номер заказа в колонке «Номер» («N-0042» → 42). Нужен, чтобы номера не повторялись,
+// даже если служебный счётчик пропал.
+function maxOrderSeq_(values) {
+  let max = 0;
+  (values || []).forEach(function (row) {
+    const m = /^N-(\d+)$/.exec(String(row[0]).trim());
+    if (m) max = Math.max(max, Number(m[1]));
+  });
+  return max;
+}
+
+// ===== Telegram =====
+
+const TELEGRAM_TEXT_LIMIT_ = 3900; // у Telegram предел 4096 знаков; запас на всякий случай
+
+// chat_id через запятую, пробел или «;». Для групп id отрицательный.
+function parseChatIds_(raw) {
+  const out = [];
+  String(raw == null ? '' : raw).split(/[\s,;]+/).forEach(function (part) {
+    if (/^-?\d{5,20}$/.test(part) && out.indexOf(part) === -1) out.push(part);
+  });
+  return out;
+}
+
+// Тело запроса sendMessage. Очень длинный заказ отправляется простым текстом без разметки,
+// чтобы обрезка не сломала HTML-теги.
+function telegramPayload_(order, orderNo, chatId, sheetUrl) {
+  const html = buildOrderText_(order, orderNo, true);
+  const markup = buildOrderButtons_(order, sheetUrl);
+  if (html.length <= TELEGRAM_TEXT_LIMIT_) {
+    return { chat_id: chatId, text: html, parse_mode: 'HTML', disable_web_page_preview: true, reply_markup: markup };
+  }
+  let text = buildOrderText_(order, orderNo, false);
+  if (text.length > TELEGRAM_TEXT_LIMIT_) text = text.slice(0, TELEGRAM_TEXT_LIMIT_ - 10) + '\n…';
+  return { chat_id: chatId, text: text, disable_web_page_preview: true, reply_markup: markup };
+}
+
+function chatLabel_(chat) {
+  if (chat.type === 'private') {
+    const name = [chat.first_name, chat.last_name].filter(Boolean).join(' ') || 'без имени';
+    return name + (chat.username ? ' (@' + chat.username + ')' : '');
+  }
+  return (chat.title || 'чат') + ' (' + (chat.type === 'channel' ? 'канал' : 'группа') + ')';
+}
+
+// Чаты, которые писали боту: ответ getUpdates → [{id, label}]
+function extractChatsFromUpdates_(json) {
+  const out = [];
+  const seen = newMap_();
+  const updates = json && Array.isArray(json.result) ? json.result : [];
+  updates.forEach(function (u) {
+    const sources = [u.message, u.edited_message, u.channel_post, u.edited_channel_post, u.my_chat_member, u.callback_query && u.callback_query.message];
+    sources.forEach(function (x) {
+      const chat = x && x.chat;
+      if (!chat || chat.id == null) return;
+      const id = String(chat.id);
+      if (seen[id]) return;
+      seen[id] = true;
+      out.push({ id: id, label: chatLabel_(chat) });
+    });
+  });
+  return out;
+}
+
+// Токен бота не должен попасть ни в лист «Ошибки», ни в логи
+function scrubSecrets_(text, secrets) {
+  let s = String(text == null ? '' : text);
+  (secrets || []).forEach(function (secret) {
+    if (secret && String(secret).length >= 6) s = s.split(String(secret)).join('***');
+  });
+  return s.replace(/bot\d{6,}:[A-Za-z0-9_-]{20,}/g, 'bot***');
+}
+
+// Итог отправки уведомления для колонки «Уведомление».
+// input: { telegramConfigured, results: [{chatId, ok, error}], email: null | {attempted, ok, error} }
+function buildNotifyStatus_(input) {
+  if (!input.telegramConfigured) {
+    const noTelegram = 'Telegram не настроен (нужны TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_IDS)';
+    return noTelegram + '; ' + emailStatusText_(input.email);
+  }
+  const failed = input.results.filter(function (r) { return !r.ok; });
+  if (failed.length === 0) return 'ok';
+  if (failed.length < input.results.length) {
+    return 'ok, но не всем: ' + failed.map(function (r) { return r.chatId + ' — ' + r.error; }).join('; ');
+  }
+  return 'ошибка Telegram: ' + failed.map(function (r) { return r.error; }).join('; ') + '; ' + emailStatusText_(input.email);
+}
+
+function emailStatusText_(email) {
+  if (!email || !email.attempted) return 'почта (ALERT_EMAIL) не задана';
+  return email.ok ? 'письмо отправлено' : 'письмо не отправлено: ' + email.error;
+}

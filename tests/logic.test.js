@@ -564,3 +564,101 @@ test('схема: у каждого листа есть заголовки, а �
   }
   assert.equal(Object.keys(plain(g.run('SHEET_NAMES_'))).length, Object.keys(headers).length);
 });
+
+// ---------------------------------------------------------------- T2.4: лимиты, строки таблицы, Telegram
+test('лимиты: окно, счётчик, срок хранения', () => {
+  const W = 10 * 60 * 1000;
+  assert.deepEqual(plain(g.parseRateState_(null, NOW, W)), { n: 0, t0: NOW });
+  assert.deepEqual(plain(g.parseRateState_(`2|${NOW - 1000}`, NOW, W)), { n: 2, t0: NOW - 1000 });
+  assert.deepEqual(plain(g.parseRateState_(`3|${NOW - W - 1}`, NOW, W)), { n: 0, t0: NOW }, 'окно закончилось');
+  assert.deepEqual(plain(g.parseRateState_(`3|${NOW + 5000}`, NOW, W)), { n: 0, t0: NOW }, 'время из будущего не верим');
+  assert.deepEqual(plain(g.parseRateState_('мусор', NOW, W)), { n: 0, t0: NOW });
+  assert.equal(g.serializeRateState_({ n: 2, t0: 5 }), '2|5');
+  assert.equal(g.rateTtlSeconds_({ n: 1, t0: NOW - 60000 }, NOW, W), 540);
+  assert.equal(g.rateTtlSeconds_({ n: 1, t0: NOW - W }, NOW, W), 1, 'не меньше секунды');
+  assert.equal(g.rateTtlSeconds_({ n: 1, t0: NOW }, NOW, 100 * 3600 * 1000), 21600, 'не больше предела кэша');
+});
+
+test('alignRow_: значения по заголовкам, чужие колонки пустые, текст защищён', () => {
+  const row = g.alignRow_(['Состав', 'Моя колонка', 'Номер', 'Телефон'], { 'Номер': 'N-0001', 'Состав': '=1+1', 'Телефон': '+84000000000', 'Сумма ₽': 5 });
+  assert.deepEqual(plain(row), ["'=1+1", '', 'N-0001', "'+84000000000"]);
+  assert.deepEqual(plain(g.alignRow_(['номер  '], { 'Номер': 7 })), [7], 'заголовок сравнивается без учёта регистра и пробелов');
+});
+
+test('строки заказа и позиций', () => {
+  const order = plain(check(goodBody({ items: [{ id: 'fr-001', qty: 2 }, { id: 'al-001', qty: 1 }], adultConfirmed: true, messenger: 'telegram' })).order);
+  const row = g.orderRowObject_(order, 'N-0042', NOW, 'в очереди');
+  assert.equal(row['Номер'], 'N-0042');
+  assert.equal(row['Статус'], 'Новый');
+  assert.equal(row['Связь'], 'Telegram');
+  assert.equal(row['Сумма ₽'], 1310);
+  assert.equal(row['18+ подтверждено'], true);
+  assert.equal(row['ID клиента'], order.clientOrderId);
+  assert.equal(row['Создан'].getTime(), NOW);
+  assert.equal(g.orderRowObject_({ ...order, hasAdult: false }, 'N-1', NOW, '')['18+ подтверждено'], '');
+  const items = plain(g.orderItemRowObjects_(order, 'N-0042', NOW));
+  assert.deepEqual(items.map(i => [i['ID товара'], i['Кол-во'], i['Цена ₽'], i['Сумма ₽'], i['Отменён']]), [['fr-001', 2, 280, 560, false], ['al-001', 1, 750, 750, false]]);
+});
+
+test('maxOrderSeq_ и parseChatIds_', () => {
+  assert.equal(g.maxOrderSeq_([['N-0007'], ['N-0041'], [''], ['x'], ['N-0012'], [' N-0100 ']]), 100);
+  assert.equal(g.maxOrderSeq_([]), 0);
+  assert.equal(g.maxOrderSeq_(undefined), 0);
+  assert.deepEqual(plain(g.parseChatIds_('123456789, -1001234567890;123456789  abc 42')), ['123456789', '-1001234567890']);
+  assert.deepEqual(plain(g.parseChatIds_(null)), []);
+});
+
+test('telegramPayload_: обычный и слишком длинный заказ', () => {
+  const order = plain(goodOrder());
+  const payload = plain(g.telegramPayload_(order, 'N-0042', '123456789', 'https://example.com/sheet'));
+  assert.equal(payload.chat_id, '123456789');
+  assert.equal(payload.parse_mode, 'HTML');
+  assert.equal(payload.disable_web_page_preview, true);
+  assert.equal(payload.reply_markup.inline_keyboard.length, 2);
+  assert.ok(payload.text.startsWith('🛒 <b>Новый заказ N-0042</b>'));
+
+  const big = { ...order, comment: 'Ж'.repeat(500), items: Array.from({ length: 50 }, (_, i) => ({ id: `x-${i}`, name: 'Очень длинное название товара '.repeat(2), unit: 'бут. 0,7 л', price: 1000, qty: 1, sum: 1000, adult: false })), total: 50000 };
+  const long = plain(g.telegramPayload_(big, 'N-0043', '123456789', ''));
+  assert.equal(long.parse_mode, undefined, 'длинный заказ идёт простым текстом');
+  assert.ok(long.text.length <= 3900);
+  assert.ok(long.text.endsWith('…'));
+  assert.ok(!long.text.includes('<b>'));
+});
+
+test('extractChatsFromUpdates_: личные чаты, группы, каналы, без повторов', () => {
+  const json = { ok: true, result: [
+    { update_id: 1, message: { chat: { id: 111111111, type: 'private', first_name: 'Саня', last_name: 'К', username: 'sanya' } } },
+    { update_id: 2, message: { chat: { id: 111111111, type: 'private', first_name: 'Саня' } } },
+    { update_id: 3, my_chat_member: { chat: { id: -1002222222222, type: 'supergroup', title: 'Заказы' } } },
+    { update_id: 4, channel_post: { chat: { id: -1003333333333, type: 'channel', title: 'Канал' } } },
+    { update_id: 5, callback_query: { message: { chat: { id: 444444444, type: 'private', first_name: 'Оля' } } } },
+    { update_id: 6 },
+  ] };
+  assert.deepEqual(plain(g.extractChatsFromUpdates_(json)), [
+    { id: '111111111', label: 'Саня К (@sanya)' },
+    { id: '-1002222222222', label: 'Заказы (группа)' },
+    { id: '-1003333333333', label: 'Канал (канал)' },
+    { id: '444444444', label: 'Оля' },
+  ]);
+  assert.deepEqual(plain(g.extractChatsFromUpdates_({ ok: true, result: [] })), []);
+  assert.deepEqual(plain(g.extractChatsFromUpdates_(null)), []);
+});
+
+test('scrubSecrets_: токен не просачивается', () => {
+  const token = '8899330802:AAFlWsQlvYeW8wh4iL22JyA7qvyVeldntpU';
+  assert.equal(g.scrubSecrets_(`Request failed for https://api.telegram.org/bot${token}/sendMessage`, [token]), 'Request failed for https://api.telegram.org/bot***/sendMessage');
+  assert.equal(g.scrubSecrets_(`токен ${token} тут`, [token]), 'токен *** тут');
+  assert.ok(!g.scrubSecrets_(`bot${token}`, []).includes('AAFl'), 'токен в адресе скрывается и без списка секретов');
+  assert.equal(g.scrubSecrets_('обычный текст', ['ab']), 'обычный текст', 'слишком короткие секреты игнорируются');
+  assert.equal(g.scrubSecrets_(null, [token]), '');
+});
+
+test('buildNotifyStatus_: все варианты', () => {
+  const ok = [{ chatId: '1', ok: true, error: '' }];
+  assert.equal(g.buildNotifyStatus_({ telegramConfigured: true, results: ok, email: null }), 'ok');
+  assert.equal(g.buildNotifyStatus_({ telegramConfigured: true, results: [...ok, { chatId: '2', ok: false, error: 'Forbidden' }], email: null }), 'ok, но не всем: 2 — Forbidden');
+  assert.equal(g.buildNotifyStatus_({ telegramConfigured: true, results: [{ chatId: '2', ok: false, error: 'Forbidden' }], email: { attempted: true, ok: true } }), 'ошибка Telegram: Forbidden; письмо отправлено');
+  assert.equal(g.buildNotifyStatus_({ telegramConfigured: true, results: [{ chatId: '2', ok: false, error: 'E' }], email: { attempted: true, ok: false, error: 'квота' } }), 'ошибка Telegram: E; письмо не отправлено: квота');
+  assert.equal(g.buildNotifyStatus_({ telegramConfigured: true, results: [{ chatId: '2', ok: false, error: 'E' }], email: { attempted: false } }), 'ошибка Telegram: E; почта (ALERT_EMAIL) не задана');
+  assert.match(g.buildNotifyStatus_({ telegramConfigured: false, results: [], email: { attempted: false } }), /^Telegram не настроен .*; почта \(ALERT_EMAIL\) не задана$/);
+});

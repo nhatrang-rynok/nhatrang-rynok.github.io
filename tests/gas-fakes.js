@@ -104,6 +104,7 @@ class FakeSpreadsheet {
     sheetNames.forEach(n => this.insertSheet(n));
   }
   getId() { return 'FAKE_SPREADSHEET_ID'; }
+  getUrl() { return 'https://docs.google.com/spreadsheets/d/FAKE_SPREADSHEET_ID/edit'; }
   getSheets() { return [...this.sheets]; }
   getSheetByName(name) { return this.sheets.find(s => s.name === name) ?? null; }
   insertSheet(name) {
@@ -142,7 +143,15 @@ export function createGoogle({ sheetNames } = {}) {
   const triggers = [];
   const alerts = [];
   const menus = [];
-  const state = { cachePuts: [], failCache: false };
+  const fetches = [];
+  const mails = [];
+  const state = {
+    cachePuts: [], failCache: false, lockFails: false, locks: 0, mailFails: false, alertAnswer: 'OK',
+    updates: { ok: true, result: [] },
+    // По умолчанию Telegram отвечает «ок»; тест может подменить поведение: (url, options) => ответ
+    fetchHandler: null,
+  };
+  const reply = (code, obj) => ({ getResponseCode: () => code, getContentText: () => (typeof obj === 'string' ? obj : JSON.stringify(obj)) });
 
   const cache = {
     get: k => store.get(k) ?? null,
@@ -154,6 +163,7 @@ export function createGoogle({ sheetNames } = {}) {
       }
       state.cachePuts.push({ keys: Object.keys(entries), ttl });
     },
+    put: (key, value, ttl) => cache.putAll({ [key]: value }, ttl),
     removeAll: keys => keys.forEach(k => store.delete(k)),
   };
 
@@ -166,8 +176,9 @@ export function createGoogle({ sheetNames } = {}) {
       newDataValidation: () => recorder('validation'),
       newConditionalFormatRule: () => recorder('rule'),
       getUi: () => ({
-        ButtonSet: { OK: 'OK' },
-        alert: (title, message) => alerts.push({ title, message }),
+        ButtonSet: { OK: 'OK', YES_NO: 'YES_NO' },
+        Button: { YES: 'YES', NO: 'NO', OK: 'OK' },
+        alert: (title, message, buttons) => { alerts.push({ title, message, buttons }); return state.alertAnswer; },
         createMenu: title => {
           const menu = { title, items: [] };
           menus.push(menu);
@@ -177,6 +188,26 @@ export function createGoogle({ sheetNames } = {}) {
       }),
     },
     CacheService: { getScriptCache: () => cache },
+    LockService: {
+      getScriptLock: () => ({
+        waitLock: () => { if (state.lockFails) throw new Error('Lock timeout'); state.locks++; },
+        releaseLock: () => { state.locks--; },
+      }),
+    },
+    UrlFetchApp: {
+      fetch: (url, options = {}) => {
+        fetches.push({ url, options, payload: options.payload ? JSON.parse(options.payload) : null });
+        if (state.fetchHandler) return state.fetchHandler(url, options, reply);
+        if (url.endsWith('/getUpdates')) return reply(200, state.updates);
+        return reply(200, { ok: true, result: { message_id: 1 } });
+      },
+    },
+    MailApp: {
+      sendEmail: (to, subject, body) => {
+        if (state.mailFails) throw new Error('Превышена суточная квота писем');
+        mails.push({ to, subject, body });
+      },
+    },
     PropertiesService: {
       getScriptProperties: () => ({
         getProperty: k => props.get(k) ?? null,
@@ -207,5 +238,5 @@ export function createGoogle({ sheetNames } = {}) {
       createTextOutput: text => ({ content: text, setMimeType(m) { this.mime = m; return this; }, getContent() { return this.content; } }),
     },
   };
-  return { globals, ss, store, props, triggers, alerts, menus, state };
+  return { globals, ss, store, props, triggers, alerts, menus, state, fetches, mails, reply };
 }

@@ -18,9 +18,28 @@ function doGet(e) {
   }
 }
 
-// POST: приём заказов появится в задаче T2.4. Пока честно отвечаем, что заказы не принимаются.
+const MAX_POST_BYTES_ = 30000;
+
+// POST: заказ с сайта. Тело — JSON в text/plain (так браузер не шлёт предварительный запрос).
 function doPost(e) {
-  return jsonOut_({ ok: false, error: 'SERVER', message: 'Приём заказов ещё не подключён' });
+  try {
+    const raw = e && e.postData ? String(e.postData.contents || '') : '';
+    if (raw.length === 0 || raw.length > MAX_POST_BYTES_) {
+      return jsonOut_({ ok: false, error: 'VALIDATION', message: 'Неверный запрос', fields: {}, items: [] });
+    }
+    let body = null;
+    try {
+      body = JSON.parse(raw);
+    } catch (err) { /* не JSON */ }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return jsonOut_({ ok: false, error: 'VALIDATION', message: 'Неверный запрос', fields: {}, items: [] });
+    }
+    if (body.action !== 'order') return jsonOut_({ ok: false, error: 'UNKNOWN_ACTION', message: 'Неизвестное действие' });
+    return jsonOut_(handleOrder_(body));
+  } catch (err) {
+    logError_('doPost', errorText_(err));
+    return jsonOut_({ ok: false, error: 'SERVER', message: 'Ошибка сервера' });
+  }
 }
 
 function jsonOut_(obj) {
@@ -37,6 +56,10 @@ function onOpen() {
     .createMenu('🛒 Рынок')
     .addItem('Обновить сайт сейчас', 'menuRefreshSite')
     .addItem('Проверить таблицу', 'menuCheckSheet')
+    .addSeparator()
+    .addItem('Отправить тестовое уведомление', 'testNotify')
+    .addItem('Найти chat_id Telegram', 'findTelegramChatIds')
+    .addItem('Создать тестовый заказ', 'menuTestOrder')
     .addSeparator()
     .addItem('Первоначальная настройка', 'setup')
     .addToUi();
@@ -55,8 +78,9 @@ function logErrors_(rows) {
     const sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES_.errors);
     if (!sheet) return;
     const now = new Date();
+    const secrets = [PropertiesService.getScriptProperties().getProperty('TELEGRAM_BOT_TOKEN')];
     const values = rows.map(function (r) {
-      return [now, sanitizeCell_(String(r[0]).slice(0, 200)), sanitizeCell_(String(r[1]).slice(0, 500))];
+      return [now, sanitizeCell_(scrubSecrets_(String(r[0]), secrets).slice(0, 200)), sanitizeCell_(scrubSecrets_(String(r[1]), secrets).slice(0, 500))];
     });
     sheet.getRange(sheet.getLastRow() + 1, 1, values.length, 3).setValues(values);
     const last = sheet.getLastRow();

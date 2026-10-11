@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { loadGas, plain, parseCsv } from './gas-loader.js';
 import { createGoogle } from './gas-fakes.js';
 
-const FILES = ['Logic.gs', 'Catalog.gs', 'Main.gs', 'Setup.gs'];
+const FILES = ['Logic.gs', 'Catalog.gs', 'Orders.gs', 'Notify.gs', 'Main.gs', 'Setup.gs'];
 const sampleCsv = parseCsv(readFileSync(new URL('../content/descriptions/sample-products.csv', import.meta.url), 'utf8'));
 const sample = JSON.parse(readFileSync(new URL('../site/data/catalog.sample.json', import.meta.url), 'utf8'));
 
@@ -322,13 +322,6 @@ test('doGet: сбой чтения таблицы не раскрывает по
   assert.deepEqual(r, { ok: false, error: 'SERVER', message: 'Ошибка сервера' });
 });
 
-test('doPost: пока заказы не принимаются, ответ понятный', () => {
-  const e = env();
-  const r = JSON.parse(e.g.doPost({ postData: { contents: '{}' } }).getContent());
-  assert.equal(r.ok, false);
-  assert.equal(r.error, 'SERVER');
-});
-
 // ---------------------------------------------------------------- handleEdit
 test('handleEdit: проставляет «Обновлено» только у изменённых строк товаров', () => {
   const e = env();
@@ -386,7 +379,7 @@ test('меню: пункты и проверка таблицы', () => {
   e.g.onOpen();
   assert.equal(e.google.menus[0].title, '🛒 Рынок');
   const fns = e.google.menus[0].items.filter(i => i[1]).map(i => i[1]);
-  assert.deepEqual(fns, ['menuRefreshSite', 'menuCheckSheet', 'setup']);
+  assert.deepEqual(fns, ['menuRefreshSite', 'menuCheckSheet', 'testNotify', 'findTelegramChatIds', 'menuTestOrder', 'setup']);
   for (const fn of fns) assert.equal(typeof e.g[fn], 'function', `функция ${fn} существует и видна в меню`);
 
   e.g.menuCheckSheet();
@@ -429,6 +422,8 @@ test('манифест: V8, часовой пояс, веб-приложение
     'https://www.googleapis.com/auth/spreadsheets.currentonly',
     'https://www.googleapis.com/auth/script.scriptapp',
     'https://www.googleapis.com/auth/script.container.ui',
+    'https://www.googleapis.com/auth/script.external_request',
+    'https://www.googleapis.com/auth/script.send_mail',
   ]);
 });
 
@@ -441,7 +436,8 @@ test('в .gs нет синтаксиса модулей и обращений к
   for (const file of FILES) {
     const code = readFileSync(new URL(`../apps-script/${file}`, import.meta.url), 'utf8');
     assert.ok(!/^\s*(import|export)\s/m.test(code), `${file}: import/export недопустимы`);
-    assert.ok(!/UrlFetchApp|MailApp|DriveApp|GmailApp/.test(code), `${file}: сервисы, для которых ещё нет разрешений в манифесте`);
+    assert.ok(!/DriveApp|GmailApp|DocumentApp/.test(code), `${file}: сервисы, для которых нет разрешений в манифесте`);
+    if (file !== 'Notify.gs') assert.ok(!/UrlFetchApp|MailApp/.test(code), `${file}: внешние запросы и почта только в Notify.gs`);
   }
   const logic = readFileSync(new URL('../apps-script/Logic.gs', import.meta.url), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\/\/.*$/gm, '');

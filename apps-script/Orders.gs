@@ -1,0 +1,210 @@
+/**
+ * Orders.gs — приём заказа с сайта: проверка, защита от дублей и перегрузки, запись в таблицу.
+ * Правила проверки лежат в Logic.gs (validateOrder_), здесь только сервисы Google.
+ */
+
+const ORDER_LOCK_WAIT_MS_ = 20000;
+const IDEMPOTENCY_TTL_S_ = 21600;        // повтор того же заказа в течение 6 часов не создаёт дубль
+const PROP_ORDER_SEQ_ = 'ORDER_SEQ';
+const PENDING_NOTIFY_ = 'отправляется…';
+// Без этих колонок заказ записать нельзя, иначе он потеряется или попадёт не туда
+const ORDERS_REQUIRED_HEADERS_ = ['Номер', 'Создан', 'Телефон', 'Состав', 'Сумма ₽'];
+
+function orderError_(error, message) {
+  return { ok: false, error: error, message: message, fields: {}, items: [] };
+}
+
+// Обрабатывает заказ из POST. Возвращает объект ответа по контракту docs/05-api.md.
+function handleOrder_(body) {
+  // 1. Ловушка для ботов: притворяемся, что всё хорошо, и ничего не пишем
+  if (body && typeof body.website === 'string' && body.website.trim() !== '') {
+    return { ok: true, orderNo: 'N-0000', total: 0, duplicate: false };
+  }
+
+  // 2–3. Приём включён? Заказ допустимый? Цены берём из каталога (кэш до 5 минут)
+  let catalog = getCatalog_(false);
+  if (catalog.settings && catalog.settings.orders_enabled === false) {
+    return orderError_('ORDERS_PAUSED', 'Сейчас заказы не принимаются');
+  }
+  let checked = validateOrder_(body, indexProducts_(catalog));
+  if (!checked.ok && checked.error === 'ITEM_UNAVAILABLE') {
+    // Кэш мог устареть: перед отказом перечитываем таблицу
+    catalog = getCatalog_(true);
+    if (catalog.settings && catalog.settings.orders_enabled === false) {
+      return orderError_('ORDERS_PAUSED', 'Сейчас заказы не принимаются');
+    }
+    checked = validateOrder_(body, indexProducts_(catalog));
+  }
+  if (!checked.ok) return checked;
+  const order = checked.order;
+
+  // 4. Запись под блокировкой: два заказа одновременно не получат один номер
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(ORDER_LOCK_WAIT_MS_);
+  } catch (err) {
+    return orderError_('SERVER', 'Сервер занят, повторите через несколько секунд');
+  }
+  let saved;
+  try {
+    saved = saveOrder_(order);
+  } finally {
+    lock.releaseLock();
+  }
+  if (saved.reply) return saved.reply;
+
+  // 6. Уведомление не может отменить заказ: заказ уже в таблице
+  let status;
+  try {
+    status = notifyOrder_(order, saved.orderNo);
+  } catch (err) {
+    status = 'ошибка уведомления: ' + scrubSecrets_(errorText_(err), []);
+    logError_('Уведомление о заказе ' + saved.orderNo, status);
+  }
+  try {
+    if (saved.notifyColumn) saved.sheet.getRange(saved.row, saved.notifyColumn).setValue(sanitizeCell_(status));
+  } catch (err) {
+    logError_('Заказ ' + saved.orderNo, 'Не удалось записать итог уведомления: ' + errorText_(err));
+  }
+  return { ok: true, orderNo: saved.orderNo, total: order.total, duplicate: false };
+}
+
+// Выполняется под блокировкой. Возвращает { reply } (дубль или лимит) либо данные записанного заказа.
+function saveOrder_(order) {
+  const cache = CacheService.getScriptCache();
+  const nowMs = Date.now();
+
+  // Повтор того же заказа (например, «Попробовать ещё раз» после обрыва связи)
+  const idemKey = 'ord_' + order.clientOrderId;
+  const earlier = cache.get(idemKey);
+  if (earlier) {
+    try {
+      const prev = JSON.parse(earlier);
+      return { reply: { ok: true, orderNo: prev.orderNo, total: prev.total, duplicate: true } };
+    } catch (err) { /* битая запись — считаем заказ новым */ }
+  }
+
+  // Лимиты: с одного телефона и общий
+  const phoneKey = 'rl_phone_' + order.phone.replace(/\D/g, '');
+  const globalKey = 'rl_global_' + Math.floor(nowMs / RATE_GLOBAL_WINDOW_MS_);
+  const phoneState = parseRateState_(cache.get(phoneKey), nowMs, RATE_PHONE_WINDOW_MS_);
+  const globalState = parseRateState_(cache.get(globalKey), nowMs, RATE_GLOBAL_WINDOW_MS_);
+  if (phoneState.n >= RATE_PHONE_LIMIT_ || globalState.n >= RATE_GLOBAL_LIMIT_) {
+    return { reply: orderError_('RATE_LIMIT', 'Слишком много заказов подряд. Напишите нам в WhatsApp') };
+  }
+
+  const ss = getSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEET_NAMES_.orders);
+  if (!sheet) throw new Error('Нет листа «' + SHEET_NAMES_.orders + '»: запустите «🛒 Рынок → Первоначальная настройка»');
+  const headers = readHeaderRow_(sheet);
+  const missing = ORDERS_REQUIRED_HEADERS_.filter(function (h) { return headers.map(normalizeHeader_).indexOf(normalizeHeader_(h)) === -1; });
+  if (missing.length) throw new Error('В листе «' + SHEET_NAMES_.orders + '» нет колонок: ' + missing.join(', ') + '. Не переименовывайте заголовки.');
+
+  // Номер: больше и счётчика, и самого большого номера в таблице
+  const props = PropertiesService.getScriptProperties();
+  const numberColumn = columnOf_(sheet, 'Номер');
+  let inSheet = 0;
+  if (sheet.getLastRow() > 1) inSheet = maxOrderSeq_(sheet.getRange(2, numberColumn, sheet.getLastRow() - 1, 1).getValues());
+  const seq = Math.max(Number(props.getProperty(PROP_ORDER_SEQ_)) || 0, inSheet) + 1;
+  props.setProperty(PROP_ORDER_SEQ_, String(seq));
+  const orderNo = formatOrderNo_(seq);
+
+  const row = sheet.getLastRow() + 1;
+  sheet.getRange(row, 1, 1, headers.length).setValues([alignRow_(headers, orderRowObject_(order, orderNo, nowMs, PENDING_NOTIFY_))]);
+
+  // С этой минуты заказ принят: повтор вернёт тот же номер, лимиты учитывают его
+  cache.put(idemKey, JSON.stringify({ orderNo: orderNo, total: order.total }), IDEMPOTENCY_TTL_S_);
+  cache.put(phoneKey, serializeRateState_({ n: phoneState.n + 1, t0: phoneState.t0 }), rateTtlSeconds_(phoneState, nowMs, RATE_PHONE_WINDOW_MS_));
+  cache.put(globalKey, serializeRateState_({ n: globalState.n + 1, t0: globalState.t0 }), rateTtlSeconds_(globalState, nowMs, RATE_GLOBAL_WINDOW_MS_));
+
+  // Позиции нужны только для статистики: сбой здесь не должен ломать принятый заказ
+  try {
+    writeOrderItems_(ss, order, orderNo, nowMs);
+  } catch (err) {
+    logError_('Заказ ' + orderNo, 'Позиции не записаны в «' + SHEET_NAMES_.orderItems + '»: ' + errorText_(err));
+  }
+
+  return { sheet: sheet, row: row, notifyColumn: columnOf_(sheet, 'Уведомление'), orderNo: orderNo };
+}
+
+function writeOrderItems_(ss, order, orderNo, nowMs) {
+  const sheet = ss.getSheetByName(SHEET_NAMES_.orderItems);
+  if (!sheet) throw new Error('Нет листа «' + SHEET_NAMES_.orderItems + '»');
+  const headers = readHeaderRow_(sheet);
+  const rows = orderItemRowObjects_(order, orderNo, nowMs).map(function (o) { return alignRow_(headers, o); });
+  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, headers.length).setValues(rows);
+}
+
+// ===== Пункт меню «Создать тестовый заказ» =====
+
+// Находит заказ по номеру, ставит ему статус «Отменён» (и его позициям — отметку), возвращает итог уведомления.
+function markOrderCancelled_(orderNo) {
+  const ss = getSpreadsheet_();
+  const orders = ss.getSheetByName(SHEET_NAMES_.orders);
+  const numberColumn = columnOf_(orders, 'Номер');
+  const statusColumn = columnOf_(orders, 'Статус');
+  const notifyColumn = columnOf_(orders, 'Уведомление');
+  let notify = '';
+  if (orders.getLastRow() > 1 && numberColumn) {
+    const numbers = orders.getRange(2, numberColumn, orders.getLastRow() - 1, 1).getValues();
+    for (let i = 0; i < numbers.length; i++) {
+      if (String(numbers[i][0]).trim() !== orderNo) continue;
+      if (statusColumn) orders.getRange(i + 2, statusColumn).setValue('Отменён');
+      if (notifyColumn) notify = String(orders.getRange(i + 2, notifyColumn).getValue());
+      break;
+    }
+  }
+  const items = ss.getSheetByName(SHEET_NAMES_.orderItems);
+  if (items && items.getLastRow() > 1) {
+    const numberCol = columnOf_(items, 'Номер заказа');
+    const cancelCol = columnOf_(items, 'Отменён');
+    if (numberCol && cancelCol) {
+      const rows = items.getRange(2, numberCol, items.getLastRow() - 1, 1).getValues();
+      for (let i = 0; i < rows.length; i++) {
+        if (String(rows[i][0]).trim() === orderNo) items.getRange(i + 2, cancelCol).setValue(true);
+      }
+    }
+  }
+  return notify;
+}
+
+// Проверка приёма заказа и уведомлений без сайта. Заказ создаётся по-настоящему (номер, строки в таблице,
+// сообщение в Telegram), потом сразу помечается «Отменён» и в «Самое популярное» не попадает.
+function menuTestOrder() {
+  try {
+    const catalog = getCatalog_(true);
+    const product = catalog.products.filter(function (p) { return p.stock !== 'out' && !p.adult; })[0];
+    if (!product) {
+      showAlert_('Тестовый заказ', ['В каталоге нет доступных товаров без отметки 18+.', 'Заполните лист «Товары» и повторите.']);
+      return;
+    }
+    const result = handleOrder_({
+      action: 'order',
+      clientOrderId: 'menu-test-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10),
+      phone: '+84 000 000 000',
+      messenger: 'call',
+      name: 'ТЕСТ',
+      room: '',
+      comment: 'Тестовый заказ из меню таблицы: обрабатывать не нужно',
+      adultConfirmed: false,
+      items: [{ id: product.id, qty: Math.max(product.min, product.step) }],
+      website: '',
+    });
+    if (!result.ok) {
+      showAlert_('Тестовый заказ', ['Заказ не прошёл: ' + (result.message || result.error) + ' (' + result.error + ').', result.fields && Object.keys(result.fields).length ? 'Поля: ' + JSON.stringify(result.fields) : '']);
+      return;
+    }
+    const notify = markOrderCancelled_(result.orderNo);
+    showAlert_('Тестовый заказ', [
+      'Заказ ' + result.orderNo + ' создан и помечен «Отменён».',
+      'Товар: ' + product.name + ', сумма ' + result.total + ' ₽.',
+      'Уведомление: ' + (notify || 'нет данных') + '.',
+      '',
+      notify === 'ok' ? 'Сообщение должно прийти в Telegram получателям.' : 'Если уведомление не «ok», откройте лист «Ошибки».',
+    ]);
+  } catch (err) {
+    const message = scrubSecrets_(errorText_(err), [PropertiesService.getScriptProperties().getProperty('TELEGRAM_BOT_TOKEN')]);
+    logError_('Тестовый заказ', message);
+    showAlert_('Тестовый заказ', ['Не получилось: ' + message]);
+  }
+}
