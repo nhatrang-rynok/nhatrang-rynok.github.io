@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img" aria-label="Фото скоро появится">
+  <rect width="400" height="400" fill="#F1EBDD"/>
+  <ellipse cx="200" cy="330" rx="110" ry="14" fill="#E3DACA"/>
+  <circle cx="200" cy="215" r="105" fill="#F2B544"/>
+  <circle cx="200" cy="215" r="105" fill="none" stroke="#D9962A" stroke-width="6"/>
+  <path d="M196 112c0-34 18-56 52-62-2 34-20 56-52 62z" fill="#4C9A5F"/>
+  <path d="M170 170c-14 16-22 36-22 58" fill="none" stroke="#FFF" stroke-opacity=".55" stroke-width="12" stroke-linecap="round"/>
+</svg>

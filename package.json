@@ -1,0 +1,9 @@
+{
+  "name": "nhatrang-rynok",
+  "private": true,
+  "type": "module",
+  "description": "Только для запуска тестов (node --test). Зависимостей нет, сайт собирается без npm.",
+  "scripts": {
+    "test": "node --test"
+  }
+}
