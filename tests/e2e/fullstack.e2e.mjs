@@ -21,7 +21,10 @@ google.props.set('TELEGRAM_CHAT_IDS', '111111111');
 const sheet = name => google.ss.getSheetByName(name);
 
 const api = async (req, body, url) => {
-  if (req.method === 'GET') return { json: JSON.parse(g.doGet({ parameter: Object.fromEntries(url.searchParams) }).getContent()) };
+  if (req.method === 'GET') {
+    const out = g.doGet({ parameter: Object.fromEntries(url.searchParams) });
+    return out.mime === 'JAVASCRIPT' ? { js: out.getContent() } : { json: JSON.parse(out.getContent()) };
+  }
   return { json: JSON.parse(g.doPost({ postData: { contents: body } }).getContent()) };
 };
 const config = 'export const API_URL = "__BASE__api";\nexport const SITE_TITLE = "Рынок у отеля";\nexport const FALLBACK_CONTACTS = { phone: "+84 000 000 000", whatsapp: "84000000000", telegram: "primer_operator" };\nexport const APP_VERSION = "test";\n';
@@ -253,6 +256,23 @@ const card = (page, name) => page.locator('.list .card').filter({ has: page.loca
   const second = await open();
   check((await second.page.getByText('Мы записываем, какие страницы открывают').count()) === 1, 'log_events=вкл: на главной есть пометка про журнал');
   await second.ctx.close();
+}
+
+// ---- 8. Страница проверки связи /diag.html: тесты работают, результат попадает в «Журнал»
+{
+  const { ctx, page } = await open();
+  await page.goto(base + 'diag.html');
+  await page.click('#run');
+  await page.waitForSelector('#summary:not([hidden])', { timeout: 120000 });
+  const items = await page.$$eval('#results li', ls => ls.map(l => l.textContent));
+  check(items.length === 7, `diag: семь проверок (${items.length})`);
+  check(items[0].includes('✅'), 'diag: свой сайт доступен');
+  check(items[2].includes('✅') && items[2].includes('версия'), 'diag: сервер читается обычным запросом');
+  check(items[4].includes('✅') && items[5].includes('✅') && items[5].includes('версия'), 'diag: XMLHttpRequest и JSONP читаются');
+  await page.waitForTimeout(500);
+  const jr = sheet('Журнал').values();
+  check(jr.some(r => r[3] === 'Каталог (сайт)' && /^диагностика: онлайн/.test(r[4])) && jr.some(r => /JSONP/.test(r[4]) && /диагностика/.test(r[4])), 'diag: результат записан в «Журнал»');
+  await ctx.close();
 }
 
 await browser.close();

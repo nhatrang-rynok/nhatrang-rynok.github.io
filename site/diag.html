@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Проверка связи — Рынок у отеля</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <main class="app-main" style="padding-top:24px">
+    <h1>Проверка связи</h1>
+    <p>Страница для настройки сайта. Нажмите кнопку и подождите около минуты: результат появится ниже и сам отправится в таблицу.</p>
+    <p><button class="btn btn--primary btn--block" id="run" type="button">Проверить</button></p>
+    <ol id="results" class="how"></ol>
+    <p id="summary" class="notice" role="status" hidden></p>
+  </main>
+  <script type="module">
+    import { API_URL } from './config.js';
+    import { getVisitorId } from './js/telemetry.js';
+
+    const run = document.getElementById('run');
+    const list = document.getElementById('results');
+    const summary = document.getElementById('summary');
+    const TIMEOUT = 12000;
+    const timed = (promise, ms = TIMEOUT) => Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error('таймаут ' + ms / 1000 + ' с')), ms))]);
+
+    const tests = [
+      ['Этот сайт (GitHub Pages)', () => fetch('data/catalog.sample.json', { cache: 'no-store' }).then(r => 'HTTP ' + r.status)],
+      ['Интернет вообще (google.com, без чтения ответа)', () => fetch('https://www.google.com/generate_204', { mode: 'no-cors' }).then(() => 'дошёл')],
+      ['Сервер заказов, чтение ответа (так работает сайт)', () => fetch(API_URL + '?action=ping').then(r => r.json()).then(j => 'версия ' + j.version)],
+      ['Сервер заказов, без чтения ответа (no-cors)', () => fetch(API_URL + '?action=ping', { mode: 'no-cors' }).then(() => 'дошёл')],
+      ['Сервер заказов через XMLHttpRequest', () => new Promise((resolve, reject) => {
+        const x = new XMLHttpRequest();
+        x.open('GET', API_URL + '?action=ping');
+        x.onload = () => resolve('HTTP ' + x.status + ', ' + x.responseText.length + ' знаков');
+        x.onerror = () => reject(new Error('ошибка XHR'));
+        x.send();
+      })],
+      ['Сервер заказов через <script> (JSONP)', () => new Promise((resolve, reject) => {
+        const name = 'diag' + Date.now();
+        const s = document.createElement('script');
+        window[name] = j => { s.remove(); resolve('версия ' + j.version); };
+        s.onerror = () => { s.remove(); reject(new Error('скрипт не загрузился')); };
+        s.src = API_URL + '?action=ping&callback=' + name;
+        document.head.append(s);
+      })],
+      ['Адрес ответов Google (script.googleusercontent.com)', () => fetch('https://script.googleusercontent.com/', { mode: 'no-cors' }).then(() => 'дошёл')],
+    ];
+
+    run.addEventListener('click', async () => {
+      if (!API_URL) { summary.hidden = false; summary.textContent = 'Режим заглушки: адрес сервера не задан.'; return; }
+      run.disabled = true;
+      list.replaceChildren();
+      summary.hidden = true;
+      const lines = [`онлайн: ${navigator.onLine}`, `сеть: ${navigator.connection?.effectiveType || '?'}${navigator.connection?.saveData ? ', экономия трафика' : ''}`];
+      for (const [name, fn] of tests) {
+        const li = document.createElement('li');
+        li.textContent = name + ': …';
+        list.append(li);
+        const t0 = Date.now();
+        let text;
+        try {
+          text = '✅ ' + (await timed(fn())) ;
+        } catch (err) {
+          text = '❌ ' + (err?.name || 'Error') + ': ' + String(err?.message || '').slice(0, 60);
+        }
+        text += ` (${Date.now() - t0} мс)`;
+        li.textContent = name + ': ' + text;
+        lines.push(name.slice(0, 40) + ' → ' + text);
+      }
+      // Отправка в журнал: запрос уходит, даже если ответ прочитать нельзя
+      const events = lines.map(d => ({ t: Date.now(), k: 'catalog', d: 'диагностика: ' + d.slice(0, 180), s: 'diag' }));
+      try {
+        await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'log', visitorId: getVisitorId(), now: Date.now(), device: { ua: navigator.userAgent, w: innerWidth, h: innerHeight, lang: navigator.language }, events }),
+          keepalive: true,
+        }).catch(() => {});
+      } catch { /* ответ не нужен */ }
+      summary.hidden = false;
+      summary.textContent = 'Готово. Результат отправлен в таблицу (лист «Журнал»). Можно сделать скриншот этой страницы и прислать.';
+      run.disabled = false;
+    });
+  </script>
+</body>
+</html>

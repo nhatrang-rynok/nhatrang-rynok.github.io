@@ -4,7 +4,7 @@
 
 // Версия кода: меняется при каждом изменении файлов в apps-script/. Видна в ответе ?action=ping и в окне authorize,
 // чтобы сразу понять, какой код сейчас работает.
-const SCRIPT_VERSION_ = '2026-10-12.4';
+const SCRIPT_VERSION_ = '2026-10-12.5';
 
 const ERROR_LOG_KEEP_ = 500;     // сколько последних строк хранить в листе «Ошибки»
 const ERROR_LOG_TRIM_AT_ = 600;  // когда строк станет больше, старые удаляются
@@ -12,26 +12,31 @@ const ERROR_LOG_TRIM_AT_ = 600;  // когда строк станет боль�
 // GET: ?action=ping — проверка, что развертывание живо; ?action=catalog — каталог для сайта
 function doGet(e) {
   return withFlush_(function () {
+    // callback — запасной способ чтения ответа через <script> (JSONP) для браузеров, где обычный запрос не читается
+    const callback = e && e.parameter && JSONP_NAME_RE_.test(e.parameter.callback || '') ? e.parameter.callback : '';
+    const out = function (obj) { return callback ? jsonpOut_(callback, obj) : jsonOut_(obj); };
     try {
       const action = e && e.parameter ? e.parameter.action : '';
       if (action === 'ping') {
-        logEvent_('info', 'Проверка связи (ping)', 'версия кода ' + SCRIPT_VERSION_);
-        return jsonOut_({ ok: true, time: new Date().toISOString(), version: SCRIPT_VERSION_ });
+        logEvent_('info', 'Проверка связи (ping)', 'версия кода ' + SCRIPT_VERSION_ + (callback ? ', через JSONP' : ''));
+        return out({ ok: true, time: new Date().toISOString(), version: SCRIPT_VERSION_ });
       }
       if (action === 'catalog') {
         const catalog = getCatalog_(false);
-        logEvent_('info', 'Запрос каталога', 'отдан ' + catalogSource_ + ', товаров ' + (catalog.products ? catalog.products.length : 0));
-        return jsonOut_(catalog);
+        logEvent_('info', 'Запрос каталога', 'отдан ' + catalogSource_ + ', товаров ' + (catalog.products ? catalog.products.length : 0) + (callback ? ', через JSONP' : ''));
+        return out(catalog);
       }
-      if (action === 'orderStatus') return jsonOut_(handleOrderStatus_(e.parameter.id));
+      if (action === 'orderStatus') return out(handleOrderStatus_(e.parameter.id));
       logEvent_('warn', 'Неизвестный запрос', 'GET, action=' + cleanText_(action, 40));
-      return jsonOut_({ ok: false, error: 'UNKNOWN_ACTION', message: 'Неизвестное действие' });
+      return out({ ok: false, error: 'UNKNOWN_ACTION', message: 'Неизвестное действие' });
     } catch (err) {
       logError_('doGet', errorText_(err));
-      return jsonOut_({ ok: false, error: 'SERVER', message: 'Ошибка сервера' });
+      return out({ ok: false, error: 'SERVER', message: 'Ошибка сервера' });
     }
   });
 }
+
+const JSONP_NAME_RE_ = /^[A-Za-z_][A-Za-z0-9_]{0,40}$/;
 
 const MAX_POST_BYTES_ = 30000;
 
@@ -63,6 +68,11 @@ function doPost(e) {
       return jsonOut_({ ok: false, error: 'SERVER', message: 'Ошибка сервера' });
     }
   });
+}
+
+// Ответ-скрипт: callback({...}). Имя функции проверено по JSONP_NAME_RE_, поэтому подставить чужой код нельзя.
+function jsonpOut_(callback, obj) {
+  return ContentService.createTextOutput(callback + '(' + JSON.stringify(obj) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
 }
 
 function jsonOut_(obj) {

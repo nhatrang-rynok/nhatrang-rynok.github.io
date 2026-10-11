@@ -32,6 +32,7 @@ export function startServer({ files = {}, api = null } = {}) {
       const out = await api(req, Buffer.concat(chunks).toString('utf8'), url);
       if (out.delay) await new Promise(r => setTimeout(r, out.delay));
       if (out.drop) { req.socket.destroy(); return; }
+      if (out.js !== undefined) { res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' }).end(out.js); return; }
       res.writeHead(out.status || 200, { 'content-type': 'application/json; charset=utf-8' }).end(JSON.stringify(out.json));
       return;
     }

@@ -259,3 +259,20 @@ test('orderStatus: отказанный заказ не считается пр�
   const text = JSON.stringify(status(e, ok.clientOrderId));
   assert.ok(!text.includes('84 000') && !text.includes('Ольга'));
 });
+
+// ---------------------------------------------------------------- JSONP (запасной способ чтения ответа)
+test('JSONP: ping, каталог и проверка заказа отвечают скриптом callback(...); чужое имя функции не принимается', () => {
+  const e = env();
+  const out = parameter => e.g.doGet({ parameter });
+  const ping = out({ action: 'ping', callback: 'cb123' });
+  assert.equal(ping.mime, 'JAVASCRIPT');
+  assert.match(ping.getContent(), /^cb123\(\{"ok":true,"time":".*","version":"\d{4}-\d\d-\d\d\.\d+"\}\);$/);
+  const catalog = out({ action: 'catalog', callback: 'onCatalog' }).getContent();
+  assert.ok(catalog.startsWith('onCatalog({"ok":true') && catalog.endsWith(');'));
+  assert.match(out({ action: 'orderStatus', id: 'never-sent-order-id', callback: 'cb1' }).getContent(), /^cb1\(\{"ok":true,"found":false\}\);$/);
+  for (const bad of ['alert(1)//', 'a.b', '1abc', 'x'.repeat(60), 'a b']) {
+    const r = out({ action: 'ping', callback: bad });
+    assert.equal(r.mime, 'JSON', `«${bad}» не принимается`);
+    assert.ok(r.getContent().startsWith('{'));
+  }
+});

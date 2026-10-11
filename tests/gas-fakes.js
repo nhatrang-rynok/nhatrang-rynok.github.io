@@ -262,7 +262,7 @@ export function createGoogle({ sheetNames } = {}) {
       computeDigest: (alg, text) => [...crypto.createHash('md5').update(text, 'utf8').digest()].map(b => (b > 127 ? b - 256 : b)),
     },
     ContentService: {
-      MimeType: { JSON: 'JSON' },
+      MimeType: { JSON: 'JSON', JAVASCRIPT: 'JAVASCRIPT' },
       createTextOutput: text => ({ content: text, setMimeType(m) { this.mime = m; return this; }, getContent() { return this.content; } }),
     },
   };
