@@ -276,3 +276,54 @@ test('JSONP: ping, каталог и проверка заказа отвеча�
     assert.ok(r.getContent().startsWith('{'));
   }
 });
+
+// ---------------------------------------------------------------- отложенные ошибки таблицы не должны ломать ответ
+const TYPED_COLUMN_ERROR = 'Нельзя выбрать числовой формат ячеек для столбца с заданным типом данных.';
+
+test('отложенная ошибка таблицы (колонка с типом данных) не превращает ответ в страницу ошибки', () => {
+  const e = env();
+  const call = () => {
+    const out = JSON.parse(e.g.doGet({ parameter: { action: 'ping' } }).getContent());
+    e.google.endExecution(); // здесь запуск в настоящем Google упал бы, и гость получил бы страницу ошибки вместо JSON
+    return out;
+  };
+  e.google.state.flushError = TYPED_COLUMN_ERROR;
+  assert.equal(call().ok, true, 'ping отвечает JSON, а не исключением');
+  assert.ok(names(e.log()).includes('Проверка связи (ping)'), 'запись в журнал всё равно сделана');
+
+  // Сбой формата при записи строк журнала: запись остаётся, ответ нормальный
+  const sheet = e.ss.getSheetByName('Журнал');
+  const original = sheet.getRange(1, 1).constructor.prototype.setNumberFormat;
+  sheet.getRange(1, 1).constructor.prototype.setNumberFormat = () => { throw new Error(TYPED_COLUMN_ERROR); };
+  try {
+    e.clearLog();
+    assert.equal(call().ok, true);
+    assert.ok(names(e.log()).includes('Проверка связи (ping)'));
+    assert.equal(JSON.parse(e.g.doGet({ parameter: { action: 'catalog' } }).getContent()).ok, true);
+  } finally {
+    sheet.getRange(1, 1).constructor.prototype.setNumberFormat = original;
+  }
+});
+
+test('заказ и отправка пакета событий переживают отложенную ошибку таблицы', () => {
+  const e = env();
+  e.google.state.flushError = TYPED_COLUMN_ERROR;
+  const r = e.post(e.order());
+  assert.equal(r.ok, true);
+  assert.doesNotThrow(() => e.google.endExecution());
+  e.google.state.flushError = TYPED_COLUMN_ERROR;
+  assert.equal(e.post(e.batch([{ t: 1_000_000, k: 'visit' }])).ok, true);
+  assert.doesNotThrow(() => e.google.endExecution());
+});
+
+test('«Первоначальная настройка» не падает, если формат даты запрещён', () => {
+  const e = env();
+  const proto = e.ss.getSheetByName('Журнал').getRange(1, 1).constructor.prototype;
+  const original = proto.setNumberFormat;
+  proto.setNumberFormat = () => { throw new Error(TYPED_COLUMN_ERROR); };
+  try {
+    assert.doesNotThrow(() => e.g.setup());
+  } finally {
+    proto.setNumberFormat = original;
+  }
+});

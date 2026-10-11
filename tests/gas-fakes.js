@@ -172,7 +172,7 @@ export function createGoogle({ sheetNames } = {}) {
   const fetches = [];
   const mails = [];
   const state = {
-    cachePuts: [], failCache: false, lockFails: false, locks: 0, mailFails: false, alertAnswer: 'OK',
+    cachePuts: [], failCache: false, flushError: null, lockFails: false, locks: 0, mailFails: false, alertAnswer: 'OK',
     updates: { ok: true, result: [] },
     // По умолчанию Telegram отвечает «ок»; тест может подменить поведение: (url, options) => ответ
     fetchHandler: null,
@@ -196,6 +196,8 @@ export function createGoogle({ sheetNames } = {}) {
   const globals = {
     console,
     SpreadsheetApp: {
+      // Как в настоящем Google: отложенные ошибки операций с таблицей всплывают при flush() (тест может включить state.flushError)
+      flush: () => { if (state.flushError) { const e = state.flushError; state.flushError = null; throw new Error(e); } },
       getActiveSpreadsheet: () => ss,
       openById: () => ss,
       ProtectionType: { RANGE: 'RANGE', SHEET: 'SHEET' },
@@ -266,5 +268,7 @@ export function createGoogle({ sheetNames } = {}) {
       createTextOutput: text => ({ content: text, setMimeType(m) { this.mime = m; return this; }, getContent() { return this.content; } }),
     },
   };
-  return { globals, ss, store, props, triggers, alerts, menus, state, fetches, mails, reply };
+  // Конец запуска в настоящем Google: неприменённые отложенные операции применяются, и их ошибка делает весь запуск неудачным
+  const endExecution = () => { if (state.flushError) { const e = state.flushError; state.flushError = null; throw new Error(e); } };
+  return { globals, ss, store, props, triggers, alerts, menus, state, fetches, mails, reply, endExecution };
 }

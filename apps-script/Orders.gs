@@ -146,8 +146,6 @@ function saveOrder_(order) {
   const row = Math.max(lastFilledRow_(numbers), 1) + 1;
   ensureRows_(sheet, row);
   sheet.getRange(row, 1, 1, headers.length).setValues([alignRow_(headers, orderRowObject_(order, orderNo, nowMs, PENDING_NOTIFY_))]);
-  const createdColumn = columnOf_(sheet, 'Создан');
-  if (createdColumn) sheet.getRange(row, createdColumn).setNumberFormat(DATE_FORMAT_);
 
   // С этой минуты заказ принят: повтор вернёт тот же номер, лимиты учитывают его
   cache.put(idemKey, JSON.stringify({ orderNo: orderNo, total: order.total }), IDEMPOTENCY_TTL_S_);

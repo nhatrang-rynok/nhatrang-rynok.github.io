@@ -170,9 +170,17 @@ function setDropdown_(sheet, header, values) {
   }
 }
 
+// Формат даты с секундами. Если колонке задан тип данных (например, превращена в «таблицу»), Google запрещает менять
+// формат: тогда оставляем как есть, а настройка идёт дальше.
 function setDateFormat_(sheet, header) {
   const range = dataRange_(sheet, header);
-  if (range) range.setNumberFormat(DATE_FORMAT_);
+  if (!range) return;
+  try {
+    range.setNumberFormat(DATE_FORMAT_);
+    SpreadsheetApp.flush();
+  } catch (err) {
+    console.warn('Формат даты не применён к «' + sheet.getName() + ' / ' + header + '»: ' + errorText_(err));
+  }
 }
 
 function setWidth_(sheet, header, pixels) {

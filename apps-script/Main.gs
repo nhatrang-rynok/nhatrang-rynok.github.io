@@ -4,7 +4,7 @@
 
 // Версия кода: меняется при каждом изменении файлов в apps-script/. Видна в ответе ?action=ping и в окне authorize,
 // чтобы сразу понять, какой код сейчас работает.
-const SCRIPT_VERSION_ = '2026-10-12.5';
+const SCRIPT_VERSION_ = '2026-10-12.6';
 
 const ERROR_LOG_KEEP_ = 500;     // сколько последних строк хранить в листе «Ошибки»
 const ERROR_LOG_TRIM_AT_ = 600;  // когда строк станет больше, старые удаляются
@@ -125,7 +125,7 @@ function logError_(where, message) {
 }
 
 // rows — [[где, что], ...]. Любая ошибка при записи не должна ломать вызывающий код.
-// Время пишется с секундами, ошибки дублируются в лист «Журнал».
+// Время пишется с секундами (формат колонки задаёт «Первоначальная настройка»), ошибки дублируются в лист «Журнал».
 function logErrors_(rows) {
   if (!rows || !rows.length) return;
   try {
@@ -139,7 +139,6 @@ function logErrors_(rows) {
     const first = lastRowInColumn_(sheet, columnOf_(sheet, 'Когда') || 1) + 1;
     ensureRows_(sheet, first + values.length - 1);
     sheet.getRange(first, 1, values.length, 3).setValues(values);
-    sheet.getRange(first, 1, values.length, 1).setNumberFormat(DATE_FORMAT_);
     const last = first + values.length - 1;
     if (last > ERROR_LOG_TRIM_AT_) sheet.deleteRows(2, last - ERROR_LOG_KEEP_ - 1);
   } catch (err) {

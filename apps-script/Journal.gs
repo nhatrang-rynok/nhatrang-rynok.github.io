@@ -54,12 +54,20 @@ function flushLog_() {
     const lastBefore = Math.max(sheet.getLastRow(), 1);
     sheet.insertRowsBefore(2, rows.length);
     const inserted = sheet.getRange(2, 1, rows.length, headers.length);
-    inserted.clearFormat(); // новые строки не должны унаследовать оформление заголовка
     inserted.setValues(rows);
-    const timeColumn = headers.map(normalizeHeader_).indexOf(normalizeHeader_('Время')) + 1;
-    if (timeColumn) sheet.getRange(2, timeColumn, rows.length, 1).setNumberFormat(DATE_FORMAT_);
+    // Оформление необязательно и может быть запрещено (например, колонка с заданным типом данных): его сбой не должен
+    // ломать запись. Ошибки таблицы приходят отложенно, поэтому flush() вызываем здесь, под защитой try.
+    try {
+      inserted.setFontWeight('normal').setBackground(null);
+      const timeColumn = headers.map(normalizeHeader_).indexOf(normalizeHeader_('Время')) + 1;
+      if (timeColumn) sheet.getRange(2, timeColumn, rows.length, 1).setNumberFormat(DATE_FORMAT_);
+      SpreadsheetApp.flush();
+    } catch (err) {
+      console.warn('Журнал: оформление новых строк не применено: ' + errorText_(err));
+    }
     const total = lastBefore + rows.length;
     if (total > LOG_TRIM_AT_) sheet.deleteRows(LOG_KEEP_ + 2, total - LOG_KEEP_ - 1); // старые записи — внизу
+    SpreadsheetApp.flush();
     return rows.length;
   } catch (err) {
     console.error('Не удалось записать в лист «Журнал»: ' + errorText_(err));
@@ -80,11 +88,18 @@ function createLogSheet_(ss) {
 }
 
 // Выполняет действие и в любом случае записывает накопленный журнал (для doGet, doPost и триггеров)
+// Перед ответом принудительно применяет все отложенные операции с таблицей: если одна из них не удалась, ошибка
+// ловится здесь. Иначе она всплыла бы после ответа, и вместо данных сайт получил бы страницу ошибки Google (без CORS).
 function withFlush_(fn) {
   try {
     return fn();
   } finally {
     flushLog_();
+    try {
+      SpreadsheetApp.flush();
+    } catch (err) {
+      console.error('Отложенная ошибка таблицы: ' + errorText_(err));
+    }
   }
 }
 
