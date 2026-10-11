@@ -100,3 +100,45 @@ export function retryCatalog() {
   if (catalogState.status === 'error') catalogState.status = 'loading';
   return loadCatalog();
 }
+
+// --- Отправка заказа ---
+// Ответ всегда объект {ok: true, orderNo, ...} или {ok: false, error, message?, fields?, items?}.
+// Сетевая ошибка и таймаут — {ok: false, error: 'SERVER', network: true}.
+
+const ORDER_TIMEOUT_MS = 15000;
+
+export async function sendOrder(payload) {
+  if (isMockMode) return mockSendOrder(payload);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ORDER_TIMEOUT_MS);
+  try {
+    // text/plain, а не application/json: так браузер не шлёт предварительный запрос, который Apps Script не принимает
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    const data = await res.json();
+    if (data && typeof data.ok === 'boolean') return data;
+    return { ok: false, error: 'SERVER' };
+  } catch {
+    return { ok: false, error: 'SERVER', network: true };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Режим заглушки: заказ никуда не уходит. Сценарии ошибок включаются адресом: ?mock=error|paused|rate|unavailable|validation
+async function mockSendOrder(payload) {
+  await new Promise(resolve => setTimeout(resolve, 700));
+  const scenario = new URLSearchParams(globalThis.location?.search).get('mock');
+  switch (scenario) {
+    case 'error': return { ok: false, error: 'SERVER', network: true };
+    case 'paused': return { ok: false, error: 'ORDERS_PAUSED', message: 'Заказы сейчас не принимаются' };
+    case 'rate': return { ok: false, error: 'RATE_LIMIT', message: 'Слишком много заказов' };
+    case 'unavailable': return { ok: false, error: 'ITEM_UNAVAILABLE', message: 'Некоторые товары сейчас недоступны', items: [payload.items[0]?.id] };
+    case 'validation': return { ok: false, error: 'VALIDATION', message: 'Проверьте данные', fields: { phone: 'Проверьте номер' } };
+    default: return { ok: true, orderNo: 'TEST-0001', total: payload.clientTotal, duplicate: false };
+  }
+}

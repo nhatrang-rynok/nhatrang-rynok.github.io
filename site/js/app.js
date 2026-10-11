@@ -70,7 +70,7 @@ function updateChrome() {
 }
 
 // Рисует текущий экран. Вызывается и при переходе, и при обновлении каталога.
-function draw(match) {
+function draw(match, navigated) {
   for (const fn of cleanups) fn();
   cleanups = [];
 
@@ -78,7 +78,12 @@ function draw(match) {
     params: match.params,
     catalog: catalogState.data,
     status: catalogState.status,
-    subscribe: fn => { cleanups.push(subscribeCart(fn)); },
+    navigated, // true — пришли на экран, false — тот же экран перерисован (обновился каталог)
+    subscribe: fn => {
+      const off = subscribeCart(fn);
+      cleanups.push(off);
+      return off;
+    },
   };
 
   root.replaceChildren();
@@ -106,11 +111,14 @@ function navigate() {
   const prev = stack[stack.length - 1];
   if (prev !== undefined) scrollByHash.set(prev, window.scrollY);
 
+  // После оформления заказа возвращаться к форме нельзя: «Назад» ведёт на главную
+  if (match.route.name === 'done') stack.length = 0;
+
   const wentBack = stack.length > 1 && stack[stack.length - 2] === path;
   if (wentBack) stack.pop();
-  else if (prev !== path) stack.push(path);
+  else if (prev !== path || stack.length === 0) stack.push(path);
 
-  draw(match);
+  draw(match, true);
   backBtn.hidden = path === '/';
 
   window.scrollTo(0, wentBack ? scrollByHash.get(path) || 0 : 0);
@@ -127,7 +135,7 @@ function onCatalogChange() {
   const match = resolve(currentPath());
   if (!match) return;
   const y = window.scrollY;
-  draw(match);
+  draw(match, false);
   window.scrollTo(0, y);
 }
 

@@ -157,6 +157,40 @@ export function cartSummary(cartItems, products) {
   return { lines: ids.length, total: Math.round(total), unavailable, priced: Boolean(products) };
 }
 
+// Данные гостя для следующего заказа (без комментария и подтверждения возраста)
+const PROFILE_KEY = 'profile.v1';
+
+export function readProfile() {
+  const p = readJson(PROFILE_KEY);
+  return p && typeof p === 'object' ? p : {};
+}
+
+export function saveProfile({ phone, messenger, name, room }) {
+  writeJson(PROFILE_KEY, { phone, messenger, name, room });
+}
+
+// ID заказа для повторной отправки: пока состав и телефон те же, ID не меняется,
+// поэтому нажатие «Попробовать ещё раз» не создаёт дубль на сервере.
+const PENDING_KEY = 'pending-order.v1';
+
+function newId() {
+  const c = globalThis.crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+export function getClientOrderId(signature) {
+  const stored = readJson(PENDING_KEY);
+  if (stored && stored.signature === signature && typeof stored.id === 'string') return stored.id;
+  const id = newId();
+  writeJson(PENDING_KEY, { id, signature });
+  return id;
+}
+
+export function clearClientOrderId() {
+  writeJson(PENDING_KEY, null);
+}
+
 // Каталог в кэше браузера
 const CATALOG_KEY = 'catalog.v1';
 const CATALOG_TTL_MS = 7 * 24 * 60 * 60 * 1000;

@@ -10,10 +10,32 @@ import { fileURLToPath } from 'node:url';
 const SITE = fileURLToPath(new URL('../../site/', import.meta.url));
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
 
-export function startServer() {
+// Статический сервер для site/.
+//   files — подмена файлов: { 'config.js': 'export const API_URL = "__BASE__api";' } (__BASE__ → адрес сервера)
+//   api(req, bodyText) — поддельный бэкенд по адресу /api; возвращает { status?, json?, drop?, delay? }
+//   (drop — оборвать соединение, как при пропавшей сети).
+export function startServer({ files = {}, api = null } = {}) {
   const server = http.createServer(async (req, res) => {
-    const path = new URL(req.url, 'http://x').pathname;
-    const file = normalize(join(SITE, path === '/' ? 'index.html' : path));
+    const url = new URL(req.url, 'http://x');
+    const path = url.pathname;
+    const base = `http://${req.headers.host}/`;
+
+    if (api && path === '/api') {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const out = await api(req, Buffer.concat(chunks).toString('utf8'), url);
+      if (out.delay) await new Promise(r => setTimeout(r, out.delay));
+      if (out.drop) { req.socket.destroy(); return; }
+      res.writeHead(out.status || 200, { 'content-type': 'application/json; charset=utf-8' }).end(JSON.stringify(out.json));
+      return;
+    }
+
+    const rel = path === '/' ? 'index.html' : path.slice(1);
+    if (rel in files) {
+      res.writeHead(200, { 'content-type': TYPES[extname(rel)] || 'text/plain' }).end(files[rel].replaceAll('__BASE__', base));
+      return;
+    }
+    const file = normalize(join(SITE, rel));
     if (!file.startsWith(SITE)) { res.writeHead(403).end(); return; }
     try {
       const body = await readFile(file);
