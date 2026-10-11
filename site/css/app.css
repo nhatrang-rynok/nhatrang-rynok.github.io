@@ -207,3 +207,144 @@ img { max-width: 100%; display: block; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* Каталог */
+
+.muted { color: var(--text-muted); }
+.pre { white-space: pre-line; }
+.section { margin-top: 28px; }
+.loading { color: var(--text-muted); }
+
+.notice--danger { border-color: var(--danger); background: #FCE9E7; }
+.notice__note { margin: 8px 0 0; font-size: 16px; color: var(--text-muted); }
+.notice .contacts { margin-top: 8px; }
+
+.photo { aspect-ratio: 1 / 1; overflow: hidden; border-radius: 8px; background: #F1EBDD; }
+.photo img { width: 100%; height: 100%; object-fit: cover; }
+
+.badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.badge-info {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #E3F1E8;
+  color: var(--accent-dark);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* Плитки категорий */
+
+.tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 8px; }
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 112px;
+  padding: 14px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  text-align: center;
+  text-decoration: none;
+}
+.tile__icon { font-size: 40px; line-height: 1; }
+.tile__name { font-size: 20px; font-weight: 700; }
+
+/* Карточки товаров */
+
+.list { display: grid; gap: 12px; }
+
+.card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 104px 1fr;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.card__body { min-width: 0; }
+.card__title { margin: 0 0 4px; font-size: 19px; text-wrap: balance; }
+.card__link { color: var(--text); text-decoration: none; }
+/* Вся карточка нажимается как ссылка; кнопки лежат выше */
+.card__link::after { content: ""; position: absolute; inset: 0; border-radius: var(--radius); }
+.card__short { margin: 0 0 4px; color: var(--text-muted); font-size: 16px; }
+.card__price { margin: 0 0 8px; font-weight: 700; }
+.card--out .photo { filter: grayscale(1); opacity: 0.65; }
+.card--out .card__title, .card--out .card__price { color: var(--text-muted); }
+
+/* Лента карточек */
+
+.strip {
+  display: flex;
+  gap: 12px;
+  margin: 0 -16px;
+  padding: 2px 16px 12px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-padding: 0 16px;
+  -webkit-overflow-scrolling: touch;
+}
+.card--strip {
+  flex: 0 0 196px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  scroll-snap-align: start;
+}
+.card--strip .card__title { margin: 0; min-height: 2.5em; }
+.card--strip .card__price { flex: 1; }
+.card--strip .card__price { margin: 0; }
+.card__media { position: relative; }
+.badges--overlay { position: absolute; top: 6px; left: 6px; margin: 0; }
+
+/* Кнопка «В корзину» и степпер */
+
+.qty { position: relative; z-index: 1; display: flex; align-items: center; gap: 4px; min-height: var(--tap); }
+.qty__add { flex: 1; }
+.qty__btn {
+  flex: none;
+  width: var(--tap);
+  height: var(--tap);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--accent-dark);
+  font: inherit;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.qty__value { flex: 1; min-width: 0; text-align: center; font-weight: 700; white-space: nowrap; overflow: hidden; }
+.qty__out { color: var(--text-muted); font-weight: 700; }
+.qty--compact .qty__add { padding: 8px 6px; font-size: 17px; }
+.qty--compact .qty__value { font-size: 17px; }
+.qty--large { max-width: 320px; }
+.qty--large .qty__btn { width: 56px; height: 56px; }
+.qty--large .qty__add { min-height: 56px; font-size: 20px; }
+.qty--large .qty__value { font-size: 20px; }
+
+/* Страница товара */
+
+.product__price { margin: 0 0 12px; font-size: 24px; font-weight: 700; }
+.product__buy { margin: 16px 0; }
+.app-main > .photo { margin-bottom: 16px; }
+
+/* Как это работает, связь */
+
+.how { margin: 0; padding-left: 24px; }
+.how li { margin-bottom: 8px; }
+.contacts { display: grid; gap: 8px; }
+
+@media (min-width: 600px) {
+  .list { grid-template-columns: repeat(2, 1fr); }
+  .tiles { grid-template-columns: repeat(3, 1fr); }
+}
