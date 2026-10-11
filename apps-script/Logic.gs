@@ -279,6 +279,25 @@ function isBlankRow_(row) {
   return row.every(function (v) { return v === '' || v == null; });
 }
 
+// Строка без «ключевых» значений считается пустой. Остальные ячейки в пустых строках не пусты:
+// в колонках с флажками лежит FALSE, а колонку «Обновлено» заполняет скрипт, поэтому isBlankRow_ здесь не подходит.
+function isBlankRecord_(table, row, headers) {
+  return headers.every(function (h) {
+    const v = cell_(table, row, h);
+    return v === '' || v == null || String(v).trim() === '';
+  });
+}
+
+// Номер последней заполненной строки колонки (с 1) или 0. values — [[ячейка], ...] начиная с первой строки.
+// Нужна вместо getLastRow(): флажки в пустых строках хранят FALSE и растягивают «последнюю строку» до конца листа.
+function lastFilledRow_(values) {
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = values[i][0];
+    if (v !== '' && v != null) return i + 1;
+  }
+  return 0;
+}
+
 // ===== Настройки =====
 
 // Возвращает { public: {...для сайта}, rate, rounding, popularDays, popularCount }
@@ -323,10 +342,10 @@ function buildCategories_(table, errors, allIds) {
   const list = [];
   const seen = allIds || newMap_();
   table.rows.forEach(function (row, i) {
-    if (isBlankRow_(row)) return;
+    if (isBlankRecord_(table, row, ['ID', 'Название'])) return;
     const rowNo = i + 2;
     const id = String(cell_(table, row, 'ID')).trim().toLowerCase();
-    if (!id) return;
+    if (!id) { errors.push({ where: SHEET_NAMES_.categories, row: rowNo, message: 'У категории «' + cleanText_(cell_(table, row, 'Название'), 30) + '» пустой ID' }); return; }
     if (!ID_RE_.test(id)) { errors.push({ where: SHEET_NAMES_.categories, row: rowNo, message: 'Неверный ID «' + cleanText_(id, 30) + '»: только маленькие латинские буквы, цифры и дефис' }); return; }
     if (seen[id]) { errors.push({ where: SHEET_NAMES_.categories, row: rowNo, message: 'ID «' + id + '» уже есть выше, строка пропущена' }); return; }
     seen[id] = true;
@@ -369,7 +388,7 @@ function buildProducts_(table, categories, allCategoryIds, settings, errors) {
   const seen = newMap_();
 
   table.rows.forEach(function (row, i) {
-    if (isBlankRow_(row)) return;
+    if (isBlankRecord_(table, row, ['ID', 'Название', 'Категория'])) return;
     const rowNo = i + 2;
     const where = SHEET_NAMES_.products;
     const rawId = String(cell_(table, row, 'ID')).trim().toLowerCase();

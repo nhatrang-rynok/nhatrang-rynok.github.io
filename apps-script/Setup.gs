@@ -109,7 +109,7 @@ function removeEmptyDefaultSheets_(ss, report) {
 // ----- Начальные данные -----
 
 function fillCategories_(sheet, report) {
-  if (sheet.getLastRow() > 1) return; // уже есть данные — не трогаем
+  if (lastRowInColumn_(sheet, columnOf_(sheet, 'ID')) > 1) return; // уже есть данные — не трогаем
   const headers = readHeaderRow_(sheet);
   const source = HEADERS_.categories;
   const rows = INITIAL_CATEGORY_ROWS_.map(function (row) {
@@ -127,8 +127,9 @@ function fillSettings_(sheet, report) {
   const headers = readHeaderRow_(sheet);
   const keyCol = columnOf_(sheet, 'Ключ');
   const have = {};
-  if (sheet.getLastRow() > 1 && keyCol) {
-    sheet.getRange(2, keyCol, sheet.getLastRow() - 1, 1).getValues().forEach(function (r) {
+  const lastKeyRow = lastRowInColumn_(sheet, keyCol);
+  if (lastKeyRow > 1) {
+    sheet.getRange(2, keyCol, lastKeyRow - 1, 1).getValues().forEach(function (r) {
       have[String(r[0]).trim()] = true;
     });
   }
@@ -140,7 +141,7 @@ function fillSettings_(sheet, report) {
     });
   });
   if (!rows.length) return;
-  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, headers.length).setValues(rows);
+  sheet.getRange(Math.max(lastKeyRow, 1) + 1, 1, rows.length, headers.length).setValues(rows);
   report.filled.push(SHEET_NAMES_.settings + ': добавлено настроек — ' + rows.length);
 }
 
@@ -202,8 +203,9 @@ function applySettingsFormat_(sheet) {
   // Флажок «Принимаем заказы» вместо слова TRUE
   const keyCol = columnOf_(sheet, 'Ключ');
   const valueCol = columnOf_(sheet, 'Значение');
-  if (keyCol && valueCol && sheet.getLastRow() > 1) {
-    const keys = sheet.getRange(2, keyCol, sheet.getLastRow() - 1, 1).getValues();
+  const lastKeyRow = lastRowInColumn_(sheet, keyCol);
+  if (keyCol && valueCol && lastKeyRow > 1) {
+    const keys = sheet.getRange(2, keyCol, lastKeyRow - 1, 1).getValues();
     for (let i = 0; i < keys.length; i++) {
       if (String(keys[i][0]).trim() === 'orders_enabled') {
         sheet.getRange(i + 2, valueCol).setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
@@ -290,15 +292,20 @@ function handleEdit(e) {
 
 function stampUpdated_(sheet, range) {
   const col = columnOf_(sheet, 'Обновлено');
-  if (!col) return;
+  const idCol = columnOf_(sheet, 'ID');
+  if (!col || !idCol) return;
   if (range.getColumn() === col && range.getLastColumn() === col) return; // правили саму дату — не штампуем
   const first = Math.max(range.getRow(), 2);
-  const last = range.getLastRow();
+  const last = Math.min(range.getLastRow(), sheet.getMaxRows());
   if (last < first) return;
   const count = last - first + 1;
+  // Дата только у строк, где есть ID: пустые строки (например, после вставки диапазона) не штампуем
+  const ids = sheet.getRange(first, idCol, count, 1).getValues();
+  const stamps = sheet.getRange(first, col, count, 1).getValues();
   const now = new Date();
-  const values = [];
-  for (let i = 0; i < count; i++) values.push([now]);
+  const values = stamps.map(function (old, i) {
+    return [String(ids[i][0]).trim() !== '' ? now : old[0]];
+  });
   sheet.getRange(first, col, count, 1).setValues(values);
 }
 

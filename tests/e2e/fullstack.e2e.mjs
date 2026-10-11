@@ -84,7 +84,7 @@ const card = (page, name) => page.locator('.list .card').filter({ has: page.loca
   check(o['Комментарий'].startsWith("'=HYPERLINK"), 'формула в комментарии записана текстом');
   check(String(o['Состав']).replace(NB, ' ') === 'Манго — 1,5 кг × 280 ₽ = 420 ₽; Помело — 1 шт × 220 ₽ = 220 ₽' && o['Сумма ₽'] === 640, `в «Заказы»: состав и сумма (${o['Сумма ₽']})`);
   check(o['Уведомление'] === 'ok', 'итог уведомления «ok»');
-  check(sheet('Позиции заказов').values().length === 3, 'в «Позиции заказов»: две строки');
+  check(sheet('Позиции заказов').count() === 3, 'в «Позиции заказов»: две строки');
   check(google.fetches.length === 1 && google.fetches[0].payload.text.includes('Новый заказ N-0001') && google.fetches[0].payload.reply_markup.inline_keyboard[0][1].url === 'https://t.me/+70000000000', 'в Telegram ушло сообщение с кнопками');
   check(await page.isHidden('#cart-count'), 'корзина очищена');
   await ctx.close();
@@ -105,7 +105,7 @@ const card = (page, name) => page.locator('.list .card').filter({ has: page.loca
   await page.click('button[type="submit"]');
   await waitH1(page, 'принят');
   const o = sheet('Заказы').values();
-  check(o.length === 3 && o[2][o[0].indexOf('18+ подтверждено')] === true, 'в таблице отмечено подтверждение 18+');
+  check(sheet('Заказы').count() === 3 && o[2][o[0].indexOf('18+ подтверждено')] === true, 'в таблице отмечено подтверждение 18+');
   await ctx.close();
 }
 
@@ -128,12 +128,12 @@ const card = (page, name) => page.locator('.list .card').filter({ has: page.loca
     }
     route.continue();
   });
-  const before = sheet('Заказы').values().length;
+  const before = sheet('Заказы').count();
   await page.click('button[type="submit"]');
   await page.waitForSelector('#failure');
   await page.getByRole('button', { name: 'Попробовать ещё раз' }).click();
   await waitH1(page, 'принят');
-  check(sheet('Заказы').values().length === before + 1, 'заказ принят один раз, хотя гость отправлял дважды');
+  check(sheet('Заказы').count() === before + 1, 'заказ принят один раз, хотя гость отправлял дважды');
   check(google.fetches.length === 3, `в Telegram ушло одно сообщение на заказ (${google.fetches.length} всего)`);
   await ctx.close();
 }

@@ -6,6 +6,9 @@ const MAX_ROWS = 1000;
 
 class FakeRange {
   constructor(sheet, row, col, rows, cols) {
+    if (row < 1 || col < 1 || rows < 1 || cols < 1 || row + rows - 1 > sheet.maxRows) {
+      throw new Error('The coordinates or dimensions of the range are invalid.');
+    }
     Object.assign(this, { sheet, row, col, rows, cols });
   }
   getSheet() { return this.sheet; }
@@ -38,6 +41,13 @@ class FakeRange {
   setNumberFormat(format) { this.sheet.formats.push({ col: this.col, format }); return this; }
   // Как в настоящей таблице: проверка на тот же диапазон заменяет прежнюю
   setDataValidation(rule) {
+    if (rule.calls?.[0]?.[0] === 'requireCheckbox') {
+      for (let r = 0; r < this.rows; r++) {
+        for (let c = 0; c < this.cols; c++) {
+          if (this.sheet.get(this.row + r, this.col + c) === '') this.sheet.set(this.row + r, this.col + c, false);
+        }
+      }
+    }
     const same = v => v.row === this.row && v.col === this.col && v.rows === this.rows;
     this.sheet.validations = this.sheet.validations.filter(v => !same(v));
     this.sheet.validations.push({ row: this.row, col: this.col, rows: this.rows, rule });
@@ -58,7 +68,7 @@ class FakeRange {
 
 class FakeSheet {
   constructor(ss, name) {
-    Object.assign(this, { ss, name, grid: [], validations: [], formats: [], protections: [], rules: [], widths: {}, frozen: 0 });
+    Object.assign(this, { ss, name, grid: [], validations: [], formats: [], protections: [], rules: [], widths: {}, frozen: 0, maxRows: MAX_ROWS });
   }
   getName() { return this.name; }
   get(r, c) { return this.grid[r - 1]?.[c - 1] ?? ''; }
@@ -77,7 +87,8 @@ class FakeSheet {
     this.grid.forEach(line => line.forEach((v, i) => { if (v !== '' && v != null) max = Math.max(max, i + 1); }));
     return max;
   }
-  getMaxRows() { return MAX_ROWS; }
+  getMaxRows() { return this.maxRows; }
+  insertRowsAfter(position, count) { this.maxRows += count; }
   getRange(row, col, rows = 1, cols = 1) { return new FakeRange(this, row, col, rows, cols); }
   getDataRange() {
     const rows = this.getLastRow();
@@ -90,6 +101,14 @@ class FakeSheet {
   setColumnWidth(col, px) { this.widths[col] = px; }
   getProtections() { return [...this.protections]; }
   setConditionalFormatRules(rules) { this.rules = rules; }
+  // Для тестов: сколько строк (с заголовком) заполнено по первой колонке; флажки FALSE в пустых строках не в счёт
+  count(col = 1) {
+    for (let r = this.grid.length; r > 0; r--) {
+      const v = this.grid[r - 1]?.[col - 1];
+      if (v !== '' && v != null) return r;
+    }
+    return 0;
+  }
   // Удобство для тестов: значения листа без хвоста пустых строк
   values() { return this.grid.slice(0, this.getLastRow()).map(line => [...line]); }
 }

@@ -53,11 +53,11 @@ test('setup: начальные категории и настройки', () =>
   const e = env();
   e.g.setup();
   const cats = e.sheet('Категории').values();
-  assert.equal(cats.length, 7);
-  assert.deepEqual(cats.slice(1).map(r => [r[0], r[1]]), [['fruits', true], ['alcohol', true], ['sweets', false], ['coffee', false], ['souvenirs', false], ['pharmacy', false]]);
+  assert.equal(e.sheet('Категории').count(), 7);
+  assert.deepEqual(cats.slice(1, 7).map(r => [r[0], r[1]]), [['fruits', true], ['alcohol', true], ['sweets', false], ['coffee', false], ['souvenirs', false], ['pharmacy', false]]);
   const settings = e.sheet('Настройки').values();
-  assert.deepEqual(settings.slice(1).map(r => r[0]), Object.keys(plain(e.g.run('DEFAULT_SETTINGS_'))));
-  assert.ok(settings.slice(1).every(r => r[3] !== ''), 'у каждой настройки есть пояснение');
+  assert.deepEqual(settings.slice(1, 13).map(r => r[0]), Object.keys(plain(e.g.run('DEFAULT_SETTINGS_'))));
+  assert.ok(settings.slice(1, 13).every(r => r[3] !== ''), 'у каждой настройки есть пояснение');
   assert.equal(settings.find(r => r[0] === 'orders_enabled')[1], true);
 });
 
@@ -119,12 +119,12 @@ test('setup: данные Сани не затираются, недостающ
   cats.getRange(4, 2).setValue(true); // включил «Сладости»
   const productsBefore = JSON.stringify(e.sheet('Товары').values());
   e.g.setup();
-  assert.equal(e.sheet('Товары').values().length, 15);
+  assert.equal(e.sheet('Товары').count(), 15);
   assert.equal(JSON.stringify(e.sheet('Товары').values()), productsBefore);
   assert.equal(settings.values().find(r => r[0] === 'phone')[1], '+84 111 222 333');
   assert.ok(settings.values().some(r => r[0] === 'popular_count'), 'недостающая настройка вернулась');
   assert.equal(cats.values()[3][1], true, 'включённая категория осталась включённой');
-  assert.equal(cats.values().length, 7);
+  assert.equal(cats.count(), 7);
 });
 
 test('setup: переставленные колонки остаются на местах, недостающие заголовки дописываются в конец', () => {
@@ -442,4 +442,47 @@ test('в .gs нет синтаксиса модулей и обращений к
   const logic = readFileSync(new URL('../apps-script/Logic.gs', import.meta.url), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\/\/.*$/gm, '');
   assert.ok(!/SpreadsheetApp|CacheService|PropertiesService|ScriptApp|ContentService|Utilities\./.test(logic), 'Logic.gs должен оставаться чистым');
+});
+
+// ---------------------------------------------------------------- пустые строки с флажками и датами
+test('каталог: пустые строки с FALSE в флажках и датой «Обновлено» не считаются товарами и не дают ошибок', () => {
+  const e = env();
+  e.g.setup();
+  e.importSample();
+  e.g.setup(); // повторная настройка снова заливает флажки FALSE в пустые строки
+  const products = e.sheet('Товары');
+  const stampCol = e.headers('products').indexOf('Обновлено') + 1;
+  const showCol = e.headers('products').indexOf('Показывать') + 1;
+  assert.equal(products.get(500, showCol), false, 'в пустых строках лежит FALSE');
+  for (let r = 16; r <= 26; r++) products.set(r, stampCol, new Date()); // след старой штамповки
+
+  const catalog = e.get('catalog');
+  assert.equal(catalog.products.length, 14);
+  assert.deepEqual(e.sheet('Ошибки').values().slice(1), [], 'в «Ошибки» ничего не попало');
+  e.g.menuCheckSheet();
+  assert.match(e.google.alerts.at(-1).message, /Проблем не найдено/);
+});
+
+test('handleEdit: пустые строки не штампуются датой', () => {
+  const e = env();
+  e.g.setup();
+  e.importSample();
+  const sheet = e.sheet('Товары');
+  const stampCol = e.headers('products').indexOf('Обновлено') + 1;
+  e.g.handleEdit({ range: sheet.getRange(14, 1, 6, 20) }); // строки 14–19: две с товарами (14, 15), остальные пустые
+  assert.ok(isDate(sheet.get(14, stampCol)) && isDate(sheet.get(15, stampCol)));
+  for (let r = 16; r <= 19; r++) assert.equal(sheet.get(r, stampCol), '', `строка ${r}`);
+});
+
+test('setup: на листах с FALSE в пустых строках ничего не ломается при повторе и категории не заливаются заново', () => {
+  const e = env();
+  e.g.setup();
+  const cats = e.sheet('Категории');
+  cats.getRange(4, 2).setValue(true);
+  e.g.setup();
+  e.g.setup();
+  assert.equal(cats.count(), 7);
+  assert.equal(cats.get(4, 2), true);
+  const settings = e.sheet('Настройки');
+  assert.equal(settings.count(), 13, 'настройки не продублированы');
 });

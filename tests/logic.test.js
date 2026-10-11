@@ -662,3 +662,29 @@ test('buildNotifyStatus_: все варианты', () => {
   assert.equal(g.buildNotifyStatus_({ telegramConfigured: true, results: [{ chatId: '2', ok: false, error: 'E' }], email: { attempted: false } }), 'ошибка Telegram: E; почта (ALERT_EMAIL) не задана');
   assert.match(g.buildNotifyStatus_({ telegramConfigured: false, results: [], email: { attempted: false } }), /^Telegram не настроен .*; почта \(ALERT_EMAIL\) не задана$/);
 });
+
+// ---------------------------------------------------------------- пустые записи и последняя строка
+test('lastFilledRow_: последняя заполненная строка колонки', () => {
+  assert.equal(g.lastFilledRow_([['Номер'], ['N-0001'], [''], [null]]), 2);
+  assert.equal(g.lastFilledRow_([[''], [''], ['']]), 0);
+  assert.equal(g.lastFilledRow_([]), 0);
+  assert.equal(g.lastFilledRow_([['a'], [0]]), 2, 'ноль — это значение');
+  assert.equal(g.lastFilledRow_([['a'], [false]]), 2, 'FALSE — тоже значение (поэтому getLastRow() не годится)');
+});
+
+test('товары: строка без ID, названия и категории пуста, даже если в ней FALSE и дата', () => {
+  const headers = plain(g.run('HEADERS_.products'));
+  const blank = headers.map(h => (['Показывать', '18+', 'Хит'].includes(h) ? false : h === 'Обновлено' ? new Date(NOW) : ''));
+  const { catalog, errors } = build({ productValues: [headers, prow(), blank, blank] });
+  assert.deepEqual(errors, []);
+  assert.equal(catalog.products.length, 1);
+});
+
+test('товары: если есть название, но нет ID — это ошибка; для категорий так же', () => {
+  const { errors } = build({ productValues: productValues([prow({ 'ID': '', 'Название': 'Без ID' })]) });
+  assert.deepEqual(errors.map(e => e.message), ['Пустой ID']);
+  const cats = build({ categoryValues: [CAT_HEADERS, ['', true, 'Без ID', '', '', 1], ['', false, '', '', '', ''], ...plain(g.run('INITIAL_CATEGORY_ROWS_'))] });
+  assert.equal(cats.errors.length, 1);
+  assert.match(cats.errors[0].message, /У категории «Без ID» пустой ID/);
+  assert.equal(cats.errors[0].row, 2);
+});

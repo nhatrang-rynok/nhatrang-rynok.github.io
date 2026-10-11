@@ -103,13 +103,14 @@ function saveOrder_(order) {
   // Номер: больше и счётчика, и самого большого номера в таблице
   const props = PropertiesService.getScriptProperties();
   const numberColumn = columnOf_(sheet, 'Номер');
-  let inSheet = 0;
-  if (sheet.getLastRow() > 1) inSheet = maxOrderSeq_(sheet.getRange(2, numberColumn, sheet.getLastRow() - 1, 1).getValues());
-  const seq = Math.max(Number(props.getProperty(PROP_ORDER_SEQ_)) || 0, inSheet) + 1;
+  const numbers = columnValues_(sheet, numberColumn);
+  const seq = Math.max(Number(props.getProperty(PROP_ORDER_SEQ_)) || 0, maxOrderSeq_(numbers.slice(1))) + 1;
   props.setProperty(PROP_ORDER_SEQ_, String(seq));
   const orderNo = formatOrderNo_(seq);
 
-  const row = sheet.getLastRow() + 1;
+  // Следующая свободная строка — по колонке «Номер»: в пустых строках колонок с флажками лежит FALSE
+  const row = Math.max(lastFilledRow_(numbers), 1) + 1;
+  ensureRows_(sheet, row);
   sheet.getRange(row, 1, 1, headers.length).setValues([alignRow_(headers, orderRowObject_(order, orderNo, nowMs, PENDING_NOTIFY_))]);
 
   // С этой минуты заказ принят: повтор вернёт тот же номер, лимиты учитывают его
@@ -132,7 +133,9 @@ function writeOrderItems_(ss, order, orderNo, nowMs) {
   if (!sheet) throw new Error('Нет листа «' + SHEET_NAMES_.orderItems + '»');
   const headers = readHeaderRow_(sheet);
   const rows = orderItemRowObjects_(order, orderNo, nowMs).map(function (o) { return alignRow_(headers, o); });
-  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, headers.length).setValues(rows);
+  const first = Math.max(lastRowInColumn_(sheet, columnOf_(sheet, 'Номер заказа')), 1) + 1;
+  ensureRows_(sheet, first + rows.length - 1);
+  sheet.getRange(first, 1, rows.length, headers.length).setValues(rows);
 }
 
 // ===== Пункт меню «Создать тестовый заказ» =====
@@ -145,23 +148,23 @@ function markOrderCancelled_(orderNo) {
   const statusColumn = columnOf_(orders, 'Статус');
   const notifyColumn = columnOf_(orders, 'Уведомление');
   let notify = '';
-  if (orders.getLastRow() > 1 && numberColumn) {
-    const numbers = orders.getRange(2, numberColumn, orders.getLastRow() - 1, 1).getValues();
-    for (let i = 0; i < numbers.length; i++) {
+  if (numberColumn) {
+    const numbers = columnValues_(orders, numberColumn);
+    for (let i = 1; i < numbers.length; i++) {
       if (String(numbers[i][0]).trim() !== orderNo) continue;
-      if (statusColumn) orders.getRange(i + 2, statusColumn).setValue('Отменён');
-      if (notifyColumn) notify = String(orders.getRange(i + 2, notifyColumn).getValue());
+      if (statusColumn) orders.getRange(i + 1, statusColumn).setValue('Отменён');
+      if (notifyColumn) notify = String(orders.getRange(i + 1, notifyColumn).getValue());
       break;
     }
   }
   const items = ss.getSheetByName(SHEET_NAMES_.orderItems);
-  if (items && items.getLastRow() > 1) {
+  if (items) {
     const numberCol = columnOf_(items, 'Номер заказа');
     const cancelCol = columnOf_(items, 'Отменён');
     if (numberCol && cancelCol) {
-      const rows = items.getRange(2, numberCol, items.getLastRow() - 1, 1).getValues();
-      for (let i = 0; i < rows.length; i++) {
-        if (String(rows[i][0]).trim() === orderNo) items.getRange(i + 2, cancelCol).setValue(true);
+      const rows = columnValues_(items, numberCol);
+      for (let i = 1; i < rows.length; i++) {
+        if (String(rows[i][0]).trim() === orderNo) items.getRange(i + 1, cancelCol).setValue(true);
       }
     }
   }

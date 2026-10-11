@@ -65,6 +65,25 @@ function onOpen() {
     .addToUi();
 }
 
+// ----- Строки листов -----
+
+// Значения колонки (все строки листа, начиная с первой)
+function columnValues_(sheet, col) {
+  return sheet.getRange(1, col, sheet.getMaxRows(), 1).getValues();
+}
+
+// Последняя заполненная строка колонки. Вместо getLastRow(): флажки в пустых строках хранят FALSE,
+// и getLastRow() возвращал бы последнюю строку листа.
+function lastRowInColumn_(sheet, col) {
+  return col ? lastFilledRow_(columnValues_(sheet, col)) : 0;
+}
+
+// Если дописывать некуда, лист растёт (иначе запись за пределами листа падает с ошибкой)
+function ensureRows_(sheet, lastRow) {
+  const max = sheet.getMaxRows();
+  if (lastRow > max) sheet.insertRowsAfter(max, lastRow - max + 100);
+}
+
 // ----- Лист «Ошибки» -----
 
 function logError_(where, message) {
@@ -82,8 +101,10 @@ function logErrors_(rows) {
     const values = rows.map(function (r) {
       return [now, sanitizeCell_(scrubSecrets_(String(r[0]), secrets).slice(0, 200)), sanitizeCell_(scrubSecrets_(String(r[1]), secrets).slice(0, 500))];
     });
-    sheet.getRange(sheet.getLastRow() + 1, 1, values.length, 3).setValues(values);
-    const last = sheet.getLastRow();
+    const first = lastRowInColumn_(sheet, columnOf_(sheet, 'Когда') || 1) + 1;
+    ensureRows_(sheet, first + values.length - 1);
+    sheet.getRange(first, 1, values.length, 3).setValues(values);
+    const last = first + values.length - 1;
     if (last > ERROR_LOG_TRIM_AT_) sheet.deleteRows(2, last - ERROR_LOG_KEEP_ - 1);
   } catch (err) {
     console.error('Не удалось записать в лист «Ошибки»: ' + errorText_(err));

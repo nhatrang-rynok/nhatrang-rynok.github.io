@@ -59,7 +59,7 @@ test('заказ: запись в «Заказы» и «Позиции зака�
   assert.match(o['ID клиента'], /^test-order-/);
 
   const items = e.sheet('Позиции заказов').values();
-  assert.equal(items.length, 3);
+  assert.equal(e.sheet('Позиции заказов').count(), 3);
   assert.deepEqual(items[1].slice(0, 1).concat(items[1].slice(2)), ['N-0001', 'fr-001', 'Манго', 1.5, 280, 420, false]);
   assert.equal(e.google.props.get('ORDER_SEQ'), '1');
   assert.equal(e.google.state.locks, 0, 'блокировка снята');
@@ -82,7 +82,7 @@ test('заказ: номера идут подряд', () => {
   assert.equal(e.post(e.order()).orderNo, 'N-0001');
   assert.equal(e.post(e.order({ phone: '+84 000 000 001' })).orderNo, 'N-0002');
   assert.equal(e.post(e.order({ phone: '+84 000 000 002' })).orderNo, 'N-0003');
-  assert.equal(e.sheet('Заказы').values().length, 4);
+  assert.equal(e.sheet('Заказы').count(), 4);
 });
 
 test('заказ: номер не повторяется, если служебный счётчик пропал или отстал', () => {
@@ -130,7 +130,7 @@ test('заказ: алкоголь требует 18+ и подтвержден�
   const bad = e.post(e.order({ items: [{ id: 'al-001', qty: 1 }] }));
   assert.equal(bad.error, 'VALIDATION');
   assert.ok(bad.fields.adult);
-  assert.equal(e.sheet('Заказы').values().length, 1);
+  assert.equal(e.sheet('Заказы').count(), 1);
   const ok = e.post(e.order({ items: [{ id: 'al-001', qty: 1 }], adultConfirmed: true }));
   assert.equal(ok.ok, true);
   assert.equal(e.row('Заказы', 1)['18+ подтверждено'], true);
@@ -146,8 +146,8 @@ test('идемпотентность: повтор того же заказа в
   assert.equal(first.duplicate, false);
   assert.deepEqual({ ...again, duplicate: false }, first);
   assert.equal(again.duplicate, true);
-  assert.equal(e.sheet('Заказы').values().length, 2);
-  assert.equal(e.sheet('Позиции заказов').values().length, 3);
+  assert.equal(e.sheet('Заказы').count(), 2);
+  assert.equal(e.sheet('Позиции заказов').count(), 3);
   assert.equal(e.google.fetches.length, 1, 'второе уведомление не уходит');
 });
 
@@ -157,7 +157,7 @@ test('лимит: 4-й заказ с одного телефона за 10 ми�
   const blocked = e.post(e.order());
   assert.equal(blocked.ok, false);
   assert.equal(blocked.error, 'RATE_LIMIT');
-  assert.equal(e.sheet('Заказы').values().length, 4);
+  assert.equal(e.sheet('Заказы').count(), 4);
   assert.equal(e.post(e.order({ phone: '+84 000 000 111' })).ok, true);
   assert.equal(e.google.state.locks, 0);
 });
@@ -182,7 +182,7 @@ test('лимит: 60 заказов в час всего', () => {
   for (let i = 0; i < 60; i++) assert.equal(e.post(e.order({ phone: `+84 100 000 ${String(i).padStart(3, '0')}` })).ok, true, `заказ ${i + 1}`);
   const r = e.post(e.order({ phone: '+84 999 999 999' }));
   assert.equal(r.error, 'RATE_LIMIT');
-  assert.equal(e.sheet('Заказы').values().length, 61);
+  assert.equal(e.sheet('Заказы').count(), 61);
 });
 
 // ---------------------------------------------------------------- пауза, ловушка, мусор
@@ -194,7 +194,7 @@ test('заказы на паузе', () => {
   e.g.handleEdit({ range: settings.getRange(row, 2) });
   const r = e.post(e.order());
   assert.equal(r.error, 'ORDERS_PAUSED');
-  assert.equal(e.sheet('Заказы').values().length, 1);
+  assert.equal(e.sheet('Заказы').count(), 1);
   assert.equal(e.google.fetches.length, 0);
 });
 
@@ -202,7 +202,7 @@ test('ловушка для ботов: притворный успех, нич�
   const e = env();
   const r = e.post(e.order({ website: 'http://spam.example' }));
   assert.deepEqual(r, { ok: true, orderNo: 'N-0000', total: 0, duplicate: false });
-  assert.equal(e.sheet('Заказы').values().length, 1);
+  assert.equal(e.sheet('Заказы').count(), 1);
   assert.equal(e.google.fetches.length, 0);
   assert.equal(e.google.props.get('ORDER_SEQ') ?? null, null);
 });
@@ -218,7 +218,7 @@ test('doPost: мусор вместо запроса', () => {
   assert.equal(e.post({ action: 'order', pad: 'я'.repeat(31000) }).error, 'VALIDATION', 'слишком большой запрос');
   assert.equal(JSON.parse(e.g.doPost({}).getContent()).error, 'VALIDATION');
   assert.equal(JSON.parse(e.g.doPost().getContent()).error, 'VALIDATION');
-  assert.equal(e.sheet('Заказы').values().length, 1);
+  assert.equal(e.sheet('Заказы').count(), 1);
 });
 
 test('ошибки проверки отдаются по контракту', () => {
@@ -234,7 +234,7 @@ test('недоступный товар: ITEM_UNAVAILABLE со списком, �
   const r = e.post(e.order({ items: [{ id: 'fr-001', qty: 1 }, { id: 'fr-010', qty: 1 }, { id: 'zz-999', qty: 1 }] }));
   assert.equal(r.error, 'ITEM_UNAVAILABLE');
   assert.deepEqual(r.items, ['fr-010', 'zz-999']);
-  assert.equal(e.sheet('Заказы').values().length, 1);
+  assert.equal(e.sheet('Заказы').count(), 1);
 });
 
 test('устаревший кэш: перед отказом таблица перечитывается', () => {
@@ -318,7 +318,7 @@ test('блокировка не получена: ошибка сервера, �
   e.google.state.lockFails = true;
   const r = e.post(e.order());
   assert.equal(r.error, 'SERVER');
-  assert.equal(e.sheet('Заказы').values().length, 1);
+  assert.equal(e.sheet('Заказы').count(), 1);
   assert.equal(e.google.fetches.length, 0);
 });
 
@@ -338,7 +338,7 @@ test('в листе «Заказы» нет обязательной колон�
   const r = e.post(e.order());
   assert.equal(r.error, 'SERVER');
   assert.ok(e.errors().some(t => t.includes('нет колонок: Состав')));
-  assert.equal(s.values().length, 1);
+  assert.equal(s.count(), 1);
   assert.equal(e.google.state.locks, 0);
 });
 
@@ -347,7 +347,7 @@ test('нет листа «Позиции заказов»: заказ приня
   e.google.ss.sheets = e.google.ss.sheets.filter(s => s.name !== 'Позиции заказов');
   const r = e.post(e.order());
   assert.equal(r.ok, true);
-  assert.equal(e.sheet('Заказы').values().length, 2);
+  assert.equal(e.sheet('Заказы').count(), 2);
   assert.ok(e.errors().some(t => t.includes('Позиции не записаны')));
 });
 
@@ -463,4 +463,52 @@ test('menuTestOrder: упавший заказ не раскрывает ток�
   const msg = e.google.alerts.at(-1).message;
   assert.match(msg, /Не получилось: В листе «Заказы» нет колонок: Состав/);
   assert.ok(!msg.includes(TOKEN));
+});
+
+// ---------------------------------------------------------------- как ведёт себя настоящая таблица (флажки = FALSE в пустых строках)
+test('в пустых строках лежит FALSE, но первый заказ пишется во вторую строку, а не в конец листа', () => {
+  const e = env();
+  const orders = e.sheet('Заказы');
+  const checkboxCol = orders.values()[0].indexOf('18+ подтверждено') + 1;
+  assert.equal(orders.get(500, checkboxCol), false, 'как в настоящей таблице: флажки заполнили пустые строки');
+  assert.equal(orders.getLastRow(), 1000, 'getLastRow() вернул бы конец листа');
+  assert.equal(e.post(e.order()).orderNo, 'N-0001');
+  assert.equal(orders.get(2, 1), 'N-0001');
+  assert.equal(orders.get(1001, 1), '', 'ничего не записано за пределами листа');
+  assert.equal(e.post(e.order({ phone: '+84 000 000 001' })).orderNo, 'N-0002');
+  assert.equal(orders.get(3, 1), 'N-0002');
+  const items = e.sheet('Позиции заказов');
+  assert.equal(items.get(2, 1), 'N-0001');
+  assert.equal(items.get(4, 1), 'N-0002');
+});
+
+test('лист «Заказы» заполнен до конца: он растёт, а не ломается', () => {
+  const e = env();
+  const orders = e.sheet('Заказы');
+  for (let r = 2; r <= 1000; r++) orders.set(r, 1, `N-${String(r - 1).padStart(4, '0')}`);
+  const r = e.post(e.order());
+  assert.equal(r.ok, true);
+  assert.equal(r.orderNo, 'N-1000', 'после N-0999 в таблице');
+  assert.ok(orders.getMaxRows() > 1000, 'лист вырос');
+  const written = orders.values().find(row => row[0] === r.orderNo);
+  assert.ok(written, 'заказ записан');
+  assert.equal(orders.get(1001, 1), r.orderNo, 'заказ в первой строке после прежнего конца');
+});
+
+test('лист «Позиции заказов» заполнен до конца: тоже растёт', () => {
+  const e = env();
+  const items = e.sheet('Позиции заказов');
+  for (let r = 2; r <= 1000; r++) items.set(r, 1, 'N-0001');
+  assert.equal(e.post(e.order()).ok, true);
+  assert.ok(items.getMaxRows() > 1000);
+  assert.equal(items.get(1001, 3), 'fr-001');
+  assert.equal(items.get(1002, 3), 'fr-008');
+});
+
+test('лист «Ошибки» с длинной историей не ломается', () => {
+  const e = env();
+  const errors = e.sheet('Ошибки');
+  for (let r = 2; r <= 1000; r++) errors.set(r, 1, new Date());
+  e.g.logError_('где-то', 'новая запись');
+  assert.ok(e.errors().some(t => t === 'где-то: новая запись'));
 });
