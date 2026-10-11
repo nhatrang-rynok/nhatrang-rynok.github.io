@@ -1,0 +1,14 @@
+# Служебное
+.DS_Store
+Thumbs.db
+*.log
+.env
+.env.*
+
+# Node и проверки (зависимости ставятся только для тестов, не для сайта)
+node_modules/
+test-results/
+playwright-report/
+
+# Скриншоты проверок хранятся не в репозитории
+screenshots/

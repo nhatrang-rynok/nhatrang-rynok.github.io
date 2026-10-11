@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Рынок у отеля</title>
+  <meta name="description" content="Фрукты, ром и другие товары с местного рынка и из аптеки с доставкой в отель. Выберите товары и оставьте телефон — мы свяжемся с вами.">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#1E7A46">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="ru_RU">
+  <meta property="og:title" content="Рынок у отеля">
+  <meta property="og:description" content="Фрукты, ром и другие товары с рынка с доставкой в отель.">
+  <link rel="icon" href="img/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <a class="skip-link" href="#app">К содержимому</a>
+
+  <header class="app-header" id="app-header">
+    <button class="icon-btn" id="back-btn" type="button" aria-label="Назад" hidden>←</button>
+    <div class="app-header__title" id="header-title">Рынок у отеля</div>
+    <a class="icon-btn cart-link" href="#/cart" aria-label="Корзина">
+      <span aria-hidden="true">🛒</span>
+      <span class="cart-link__count" id="cart-count" aria-live="polite" hidden>0</span>
+    </a>
+  </header>
+
+  <main class="app-main" id="app" tabindex="-1">
+    <noscript><p class="notice">Для работы сайта нужен включённый JavaScript.</p></noscript>
+  </main>
+
+  <div class="cart-bar" id="cart-bar" hidden>
+    <a class="btn btn--primary btn--block" href="#/cart" id="cart-bar-link">Корзина</a>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

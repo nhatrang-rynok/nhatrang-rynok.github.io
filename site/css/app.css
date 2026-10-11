@@ -1,0 +1,209 @@
+/* Мобильная вёрстка в первую очередь. Рассчитано на 360–430 px, на широких экранах — колонка до 640 px. */
+
+:root {
+  --bg: #FFFDF8;
+  --surface: #FFFFFF;
+  --text: #1F1F1F;
+  --text-muted: #595959;
+  --border: #E3DED3;
+  --accent: #1E7A46;
+  --accent-dark: #145A32;
+  --on-accent: #FFFFFF;
+  --warn-bg: #FFF4D6;
+  --warn-border: #E0B000;
+  --danger: #B3261E;
+  --radius: 12px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  --header-h: 56px;
+  --tap: 48px;
+  --font: -apple-system, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 18px/1.45 var(--font);
+  overflow-wrap: anywhere;
+}
+
+h1, h2, h3 { line-height: 1.25; margin: 0 0 12px; }
+h1 { font-size: 26px; }
+h2 { font-size: 22px; }
+h3 { font-size: 20px; }
+p { margin: 0 0 12px; }
+a { color: var(--accent-dark); }
+img { max-width: 100%; display: block; }
+
+:focus-visible { outline: 3px solid #1A5FB4; outline-offset: 2px; }
+
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -100px;
+  background: var(--surface);
+  padding: 8px 12px;
+  border-radius: 8px;
+  z-index: 100;
+}
+.skip-link:focus { top: 8px; }
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+/* Шапка */
+
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  height: var(--header-h);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header__title {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-size: 20px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.icon-btn {
+  position: relative;
+  flex: none;
+  width: var(--tap);
+  height: var(--tap);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 26px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.icon-btn[hidden] { display: none; }
+/* Пока кнопка «Назад» скрыта, место под ней остаётся, чтобы заголовок был по центру */
+.icon-btn[hidden] + .app-header__title { margin-left: var(--tap); }
+
+.cart-link__count {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 11px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 22px;
+  text-align: center;
+}
+.cart-link__count[hidden] { display: none; }
+
+/* Содержимое */
+
+.app-main {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+}
+.app-main:focus { outline: none; }
+.app-main.has-cart-bar { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
+
+.page-title:focus { outline: none; }
+
+/* Кнопки */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap);
+  padding: 10px 20px;
+  border: 2px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--accent-dark);
+  font: inherit;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn--primary { background: var(--accent); color: var(--on-accent); }
+.btn--block { display: flex; width: 100%; }
+.btn[disabled], .btn[aria-disabled="true"] { opacity: 0.55; cursor: default; }
+
+/* Плашки */
+
+.notice {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--warn-border);
+  border-radius: var(--radius);
+  background: var(--warn-bg);
+}
+
+.badge-adult {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* Нижняя панель корзины */
+
+.cart-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  padding: 8px 16px calc(8px + env(safe-area-inset-bottom));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.cart-bar[hidden] { display: none; }
+.cart-bar .btn { max-width: 608px; margin: 0 auto; }
+
+/* Временные заглушки экранов (убираются по мере реализации) */
+
+.stub { margin: 24px 0; padding: 16px; border: 2px dashed var(--border); border-radius: var(--radius); color: var(--text-muted); }
+.stub-links { margin: 0; padding-left: 22px; }
+.stub-links li { margin-bottom: 4px; }
+.stub-links a { display: inline-block; padding: 8px 0; }
+
+@media (min-width: 600px) {
+  .app-main { padding-top: 24px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
