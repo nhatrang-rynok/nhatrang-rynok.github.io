@@ -5,6 +5,7 @@ import { cartSummary, getCart, subscribe as subscribeCart } from './store.js';
 import { productMap } from './catalog.js';
 import { formatItemsCount, formatPrice } from './format.js';
 import { el } from './dom.js';
+import { diffCart, initTelemetry, setTelemetryEnabled, track, trackView } from './telemetry.js';
 import * as home from './views/home.js';
 import * as category from './views/category.js';
 import * as product from './views/product.js';
@@ -121,6 +122,7 @@ function navigate() {
   else if (prev !== path || stack.length === 0) stack.push(path);
 
   draw(match, true);
+  trackView(match.route.name, path, document.title);
   backBtn.hidden = path === '/';
 
   window.scrollTo(0, wentBack ? scrollByHash.get(path) || 0 : 0);
@@ -132,8 +134,14 @@ function navigate() {
   }
 }
 
+// Журнал посещений ведётся, пока в «Настройках» не снята галочка log_events
+function syncTelemetry() {
+  setTelemetryEnabled(catalogState.data?.settings?.log_events !== false);
+}
+
 // Каталог обновился: перерисовываем тот же экран на том же месте
 function onCatalogChange() {
+  syncTelemetry();
   const match = resolve(currentPath());
   if (!match) return;
   const y = window.scrollY;
@@ -146,8 +154,18 @@ backBtn.addEventListener('click', () => {
   else location.hash = '#/';
 });
 
+initTelemetry();
 loadCatalog(); // кэш подхватывается сразу, до первой отрисовки
+syncTelemetry();
 subscribeCatalog(onCatalogChange);
 subscribeCart(updateChrome);
+
+let previousCart = getCart();
+subscribeCart(() => {
+  const next = getCart();
+  const products = productMap(catalogState.data);
+  for (const line of diffCart(previousCart, next, id => products?.get(id)?.name)) track('cart', line);
+  previousCart = next;
+});
 window.addEventListener('hashchange', navigate);
 navigate();

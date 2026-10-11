@@ -16,8 +16,9 @@ class FakeRange {
   getColumn() { return this.col; }
   getLastRow() { return this.row + this.rows - 1; }
   getLastColumn() { return this.col + this.cols - 1; }
+  getA1Notation() { return `R${this.row}C${this.col}` + (this.rows > 1 || this.cols > 1 ? `:R${this.row + this.rows - 1}C${this.col + this.cols - 1}` : ''); }
   getValues() {
-    this.sheet.ss.reads++;
+    if (this.sheet.name !== 'Журнал') this.sheet.ss.reads++; // чтение журнала не считаем: он пишется при каждом запросе
     const out = [];
     for (let r = 0; r < this.rows; r++) {
       const line = [];
@@ -211,6 +212,7 @@ export function createGoogle({ sheetNames } = {}) {
     LockService: {
       getScriptLock: () => ({
         waitLock: () => { if (state.lockFails) throw new Error('Lock timeout'); state.locks++; },
+        tryLock: () => { if (state.lockFails) return false; state.locks++; return true; },
         releaseLock: () => { state.locks--; },
       }),
     },

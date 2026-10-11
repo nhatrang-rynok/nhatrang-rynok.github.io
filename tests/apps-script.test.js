@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { loadGas, plain, parseCsv } from './gas-loader.js';
 import { createGoogle } from './gas-fakes.js';
 
-const FILES = ['Logic.gs', 'Catalog.gs', 'Orders.gs', 'Notify.gs', 'Main.gs', 'Setup.gs'];
+const FILES = ['Logic.gs', 'Catalog.gs', 'Orders.gs', 'Notify.gs', 'Journal.gs', 'Main.gs', 'Setup.gs'];
 const sampleCsv = parseCsv(readFileSync(new URL('../content/descriptions/sample-products.csv', import.meta.url), 'utf8'));
 const sample = JSON.parse(readFileSync(new URL('../site/data/catalog.sample.json', import.meta.url), 'utf8'));
 
@@ -25,13 +25,14 @@ function env(sheetNames) {
 // Date из .gs создаётся в другом контексте Node, поэтому instanceof не подходит
 const isDate = v => Object.prototype.toString.call(v) === '[object Date]';
 
-const snapshot = ss => JSON.stringify(ss.sheets.map(s => [s.name, s.values(), s.validations.length, s.protections.length, s.rules.length]));
+// Журнал пополняется при каждом запуске, поэтому в снимок его строки не входят
+const snapshot = ss => JSON.stringify(ss.sheets.filter(s => s.name !== 'Журнал').map(s => [s.name, s.values(), s.validations.length, s.protections.length, s.rules.length]));
 
 // ---------------------------------------------------------------- setup
 test('setup: листы в нужном порядке, заголовки, пустой «Лист1» удалён', () => {
   const e = env(['Лист1']);
   e.g.setup();
-  assert.deepEqual(e.ss.names(), ['Товары', 'Категории', 'Настройки', 'Заказы', 'Позиции заказов', 'Ошибки']);
+  assert.deepEqual(e.ss.names(), ['Товары', 'Категории', 'Настройки', 'Заказы', 'Позиции заказов', 'Ошибки', 'Журнал']);
   for (const [key, name] of Object.entries(plain(e.g.run('SHEET_NAMES_')))) {
     assert.deepEqual(e.sheet(name).values()[0], e.headers(key), `заголовки «${name}»`);
     assert.equal(e.sheet(name).frozen, 1, `закреплена первая строка «${name}»`);
@@ -56,8 +57,8 @@ test('setup: начальные категории и настройки', () =>
   assert.equal(e.sheet('Категории').count(), 7);
   assert.deepEqual(cats.slice(1, 7).map(r => [r[0], r[1]]), [['fruits', true], ['alcohol', true], ['sweets', false], ['coffee', false], ['souvenirs', false], ['pharmacy', false]]);
   const settings = e.sheet('Настройки').values();
-  assert.deepEqual(settings.slice(1, 13).map(r => r[0]), Object.keys(plain(e.g.run('DEFAULT_SETTINGS_'))));
-  assert.ok(settings.slice(1, 13).every(r => r[3] !== ''), 'у каждой настройки есть пояснение');
+  assert.deepEqual(settings.slice(1, 14).map(r => r[0]), Object.keys(plain(e.g.run('DEFAULT_SETTINGS_'))));
+  assert.ok(settings.slice(1, 14).every(r => r[3] !== ''), 'у каждой настройки есть пояснение');
   assert.equal(settings.find(r => r[0] === 'orders_enabled')[1], true);
 });
 
@@ -380,7 +381,7 @@ test('меню: пункты и проверка таблицы', () => {
   e.g.onOpen();
   assert.equal(e.google.menus[0].title, '🛒 Рынок');
   const fns = e.google.menus[0].items.filter(i => i[1]).map(i => i[1]);
-  assert.deepEqual(fns, ['menuRefreshSite', 'menuCheckSheet', 'testNotify', 'findTelegramChatIds', 'menuTestOrder', 'setup']);
+  assert.deepEqual(fns, ['menuRefreshSite', 'menuCheckSheet', 'testNotify', 'findTelegramChatIds', 'menuTestOrder', 'menuCheckPermissions', 'setup']);
   for (const fn of fns) assert.equal(typeof e.g[fn], 'function', `функция ${fn} существует и видна в меню`);
 
   e.g.menuCheckSheet();
@@ -419,13 +420,8 @@ test('манифест: V8, часовой пояс, веб-приложение
   assert.equal(m.runtimeVersion, 'V8');
   assert.equal(m.timeZone, 'Asia/Ho_Chi_Minh');
   assert.deepEqual(m.webapp, { executeAs: 'USER_DEPLOYING', access: 'ANYONE_ANONYMOUS' });
-  assert.deepEqual(m.oauthScopes, [
-    'https://www.googleapis.com/auth/spreadsheets.currentonly',
-    'https://www.googleapis.com/auth/script.scriptapp',
-    'https://www.googleapis.com/auth/script.container.ui',
-    'https://www.googleapis.com/auth/script.external_request',
-    'https://www.googleapis.com/auth/script.send_mail',
-  ]);
+  // Явного списка разрешений нет: иначе устаревший список в редакторе владельца молча отнимал бы новые разрешения (D68)
+  assert.equal(m.oauthScopes, undefined);
 });
 
 test('все .gs файлы грузятся вместе: имена не повторяются (как в одном проекте Apps Script)', () => {
@@ -485,7 +481,7 @@ test('setup: на листах с FALSE в пустых строках ниче�
   assert.equal(cats.count(), 7);
   assert.equal(cats.get(4, 2), true);
   const settings = e.sheet('Настройки');
-  assert.equal(settings.count(), 13, 'настройки не продублированы');
+  assert.equal(settings.count(), 14, 'настройки не продублированы');
 });
 
 test('каждый .gs файл начинается со своего имени (по нему владелец проверяет, что вставил нужный код)', () => {

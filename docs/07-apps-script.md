@@ -11,22 +11,23 @@
 | `Catalog.gs` | `getCatalog_()`, `rebuildCatalog_()`, чтение листов, кэш кусками (свежий на 5 минут и «последний хороший» на 6 часов), `clearCatalogCache()`, запись проблем таблицы в «Ошибки» |
 | `Orders.gs` | `handleOrder_(body)`, лимиты, идемпотентность, счётчик номеров, запись строк |
 | `Notify.gs` | `notifyOrder_(order)`, `sendTelegram_(text)`, `sendMailFallback_(subject, body)`, `testNotify()` |
+| `Journal.gs` | Лист «Журнал»: `logEvent_` (очередь в памяти), `flushLog_` (запись пачкой под `tryLock`, обрезка старых строк, лист создаётся сам), `withFlush_`, `logNow_`, `handleLogBatch_` (пачка событий сайта, лимиты) |
 | `Photos.gs` | `syncPhotos()` |
 | `Setup.gs` | `setup()`, `installTriggers_()`, `handleEdit(e)`, `findTelegramChatIds()` |
 | `Logic.gs` | Чистые функции без сервисов Google: схема листов и настройки по умолчанию, `normalizePhone_` / `checkPhone_`, `computeRubPrice_`, `parseRelated_`, `photoUrl_`, `assembleCatalog_` (разбор таблицы в каталог), `computePopular_`, `validateOrder_`, `buildOrderText_` / `buildOrderButtons_` / `buildOrderComposition_`, `escapeHtml_`, `sanitizeCell_` |
 
-## Scopes (`oauthScopes`)
+## Разрешения
 
-Разрешения добавляются по мере появления кода, который в них нуждается. Каждое добавление указывается в «Как развернуть»: владельцу нужно заново подтвердить разрешения.
+Явного списка `oauthScopes` в `appsscript.json` **нет** (D68): иначе устаревший список в редакторе владельца перекрывал бы автоопределение, и новые разрешения не выдавались бы. Google определяет их по коду. Окно подтверждения появляется только при запуске функции из редактора (`authorize`), поэтому каждое новое разрешение указывается в «Как развернуть» вместе с этим запуском.
 
-| Scope | С какой задачи | Зачем |
+| Что нужно | С какой задачи | Зачем |
 |---|---|---|
-| `spreadsheets.currentonly` | T2.2 | таблица, к которой привязан скрипт |
-| `script.scriptapp` | T2.2 | установка триггера на правки |
-| `script.container.ui` | T2.2 | меню и окна в таблице |
-| `script.external_request` | T2.4 | Telegram API |
-| `script.send_mail` | T2.4 | запасные письма |
-| `drive` | T3.1 | папка с фото: поиск файлов и доступ по ссылке |
+| Таблица (`SpreadsheetApp`) | T2.2 | чтение и запись листов |
+| Триггеры (`ScriptApp`) | T2.2 | установка триггера на правки |
+| Меню и окна (`getUi`) | T2.2 | меню «🛒 Рынок» и окна в таблице |
+| Запросы в интернет (`UrlFetchApp`) | T2.4 | Telegram API |
+| Почта (`MailApp`) | T2.4 | запасные письма |
+| Диск (`DriveApp`) | T3.1 | папка с фото: поиск файлов и доступ по ссылке |
 
 ## Script Properties (секреты и служебные значения)
 

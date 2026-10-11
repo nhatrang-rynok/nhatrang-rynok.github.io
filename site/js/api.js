@@ -1,6 +1,7 @@
 // Загрузка каталога: сначала кэш браузера, потом сеть. Пустой API_URL — режим заглушки.
 import { API_URL } from '../config.js';
 import { readCatalogCache, writeCatalogCache } from './store.js';
+import { getVisitorId, track } from './telemetry.js';
 
 const FETCH_TIMEOUT_MS = 15000;
 const SAMPLE_URL = 'data/catalog.sample.json';
@@ -80,14 +81,17 @@ export function loadCatalog() {
   const statusBefore = catalogState.status;
   let changed = false;
 
+  const started = Date.now();
   inFlight = fetchCatalog()
     .then(fresh => {
+      track('catalog', `загружен за ${Date.now() - started} мс, товаров ${fresh.products.length}${cached ? ', до этого показан кэш' : ''}`);
       changed = !catalogState.data || signature(fresh) !== signature(catalogState.data);
       if (changed) catalogState.data = fresh;
       catalogState.status = 'ready';
       writeCatalogCache(fresh);
     })
-    .catch(() => {
+    .catch(err => {
+      track('catalog', `не загрузился: ${err?.name === 'AbortError' ? 'таймаут' : err?.message || 'ошибка'}; ${catalogState.data ? 'показан кэш' : 'кэша нет'}`);
       // Есть кэш — продолжаем на нём. Нет — показываем экран ошибки.
       if (!catalogState.data) catalogState.status = 'error';
     })
@@ -113,6 +117,14 @@ const ORDER_TIMEOUT_MS = 15000;
 
 export async function sendOrder(payload) {
   if (isMockMode) return mockSendOrder(payload);
+  track('order', `отправка заказа: позиций ${payload.items.length}, сумма ≈ ${payload.clientTotal} ₽`);
+  const result = await postOrder(payload);
+  track('order', result.ok ? `заказ принят${result.duplicate ? ' (повтор, дубль не создан)' : ''}` : `заказ не принят: ${result.error}${result.network ? ' (нет связи)' : ''}`,
+    result.ok ? String(result.orderNo || '').replace(/[^A-Za-z0-9-]/g, '').slice(0, 12) : '');
+  return result;
+}
+
+async function postOrder(payload) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ORDER_TIMEOUT_MS);
   try {
@@ -120,7 +132,7 @@ export async function sendOrder(payload) {
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, visitorId: getVisitorId() }),
       signal: controller.signal,
     });
     const data = await res.json();

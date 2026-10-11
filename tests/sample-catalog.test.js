@@ -26,6 +26,7 @@ test('настройки: публичные ключи и заглушки ко
     assert.ok(isStr(s[key]), `${key} — строка`);
   }
   assert.equal(typeof s.orders_enabled, 'boolean');
+  assert.equal(typeof s.log_events, 'boolean');
   assert.equal(s.phone, '+84 000 000 000');
   assert.match(s.whatsapp, /^\d+$/, 'whatsapp — только цифры');
   assert.equal(s.whatsapp, '84000000000');

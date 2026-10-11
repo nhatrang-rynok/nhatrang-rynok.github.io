@@ -12,6 +12,9 @@ const CACHE_CHUNK_SIZE_ = 30000;
 const PROP_CATALOG_ERRORS_SIG_ = 'CATALOG_ERRORS_SIG';
 const MAX_LOGGED_CATALOG_ERRORS_ = 30;
 
+// Откуда взят последний каталог: 'из кэша' или 'из таблицы' (для листа «Журнал»)
+let catalogSource_ = 'из кэша';
+
 // Таблица, к которой привязан скрипт. В веб-приложении getActiveSpreadsheet() работает для привязанного скрипта.
 function getSpreadsheet_() {
   const active = SpreadsheetApp.getActiveSpreadsheet();
@@ -72,10 +75,13 @@ function getCatalog_(forceRebuild) {
     const cached = readCatalogCache_(CACHE_PREFIX_);
     if (cached) {
       try {
-        return JSON.parse(cached);
+        const parsed = JSON.parse(cached);
+        catalogSource_ = 'из кэша';
+        return parsed;
       } catch (err) { /* битый кэш — пересоберём */ }
     }
   }
+  catalogSource_ = 'из таблицы';
   return rebuildCatalog_();
 }
 
@@ -93,6 +99,7 @@ function rebuildCatalog_() {
 
   // В таблице сломаны заголовки: лучше отдать прошлый хороший каталог, чем пустой
   if (result.fatal) {
+    logEvent_('error', 'Таблица повреждена', 'не найдены нужные колонки; сайту отдан прошлый хороший каталог, если он есть');
     const good = readCatalogCache_(CACHE_GOOD_PREFIX_);
     if (good) {
       try {
@@ -114,6 +121,8 @@ function rebuildCatalog_() {
     popular: result.catalog.popular,
   };
   const json = JSON.stringify(full);
+  logEvent_(result.errors.length ? 'warn' : 'info', 'Каталог собран из таблицы',
+    'товаров ' + full.products.length + ', категорий ' + full.categories.length + ', проблем в таблице ' + result.errors.length);
   writeCatalogCache_(CACHE_PREFIX_, json, CACHE_TTL_S_);
   if (!result.fatal) writeCatalogCache_(CACHE_GOOD_PREFIX_, json, CACHE_GOOD_TTL_S_);
   return full;

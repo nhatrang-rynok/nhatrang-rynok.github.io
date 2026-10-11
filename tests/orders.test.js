@@ -5,9 +5,9 @@ import { readFileSync } from 'node:fs';
 import { loadGas, plain, parseCsv } from './gas-loader.js';
 import { createGoogle } from './gas-fakes.js';
 
-const FILES = ['Logic.gs', 'Catalog.gs', 'Orders.gs', 'Notify.gs', 'Main.gs', 'Setup.gs'];
+const FILES = ['Logic.gs', 'Catalog.gs', 'Orders.gs', 'Notify.gs', 'Journal.gs', 'Main.gs', 'Setup.gs'];
 const sampleCsv = parseCsv(readFileSync(new URL('../content/descriptions/sample-products.csv', import.meta.url), 'utf8'));
-const TOKEN = '8899330802:AAFlWsQlvYeW8wh4iL22JyA7qvyVeldntpU';
+const TOKEN = '123456789:AAFakeTokenForTestsOnly-0123456789abc';
 const NB = ' ';
 let counter = 0;
 
@@ -272,7 +272,7 @@ test('Telegram: исключение с токеном в тексте не по
   const r = e.post(e.order());
   assert.equal(r.ok, true);
   assert.ok(e.row('Заказы', 1)['Уведомление'].startsWith('ошибка Telegram: Request failed for https://api.telegram.org/bot***/sendMessage'));
-  assert.ok(!e.allText().includes('AAFlWsQ'), 'токена нет нигде');
+  assert.ok(!e.allText().includes('AAFakeTo'), 'токена нет нигде');
 });
 
 test('Telegram не настроен: заказ принят, в статусе подсказка, в «Ошибки» одна запись', () => {
@@ -537,6 +537,7 @@ test('findTelegramChatIds без разрешения: подсказка про
 
 test('authorize: итог проверки разрешений и свойств, версия кода', () => {
   const e = env({ chats: '' });
+  const alertsBefore = e.google.alerts.length;
   const lines = plain(e.g.authorize());
   assert.match(lines[0], /^Версия кода: \d{4}-\d\d-\d\d\.\d+$/);
   assert.ok(lines.some(l => l.startsWith('✅ Таблица: ')));
@@ -545,8 +546,20 @@ test('authorize: итог проверки разрешений и свойст�
   assert.ok(lines.some(l => l.startsWith('✅ Свойство TELEGRAM_BOT_TOKEN')));
   assert.ok(lines.some(l => l.startsWith('❌ Свойство TELEGRAM_CHAT_IDS: пусто')));
   assert.ok(lines.some(l => l.startsWith('✅ Свойство ALERT_EMAIL')));
-  assert.equal(e.google.alerts.at(-1).title, 'Проверка разрешений');
+  assert.equal(e.google.alerts.length, alertsBefore, 'из редактора окно не открываем: оно может зависнуть');
+  assert.equal(e.google.ss.toasts.at(-1).title, 'Проверка разрешений');
   assert.ok(!JSON.stringify(lines).includes(TOKEN), 'токен не показывается');
+});
+
+test('меню «Проверить разрешения»: окно с отчётом и подсказкой, что делать', () => {
+  const e = env({ chats: '' });
+  e.google.state.fetchHandler = () => { throw new Error('нет разрешения на UrlFetchApp'); };
+  e.g.menuCheckPermissions();
+  const alert = e.google.alerts.at(-1);
+  assert.equal(alert.title, 'Проверка разрешений');
+  assert.match(alert.message, /❌ Запросы в интернет/);
+  assert.match(alert.message, /выберите функцию authorize/);
+  assert.ok(!alert.message.includes(TOKEN));
 });
 
 test('authorize: без разрешений показывает, что именно не работает, и не падает', () => {

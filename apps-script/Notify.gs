@@ -65,6 +65,8 @@ function notifyOrder_(order, orderNo) {
 
   const results = telegramConfigured ? config.chatIds.map(function (chatId) {
     const r = sendTelegram_(config.token, telegramPayload_(order, orderNo, chatId, sheetUrl));
+    logEvent_(r.ok ? 'info' : 'error', r.ok ? 'Telegram: отправлено' : 'Telegram: не доставлено',
+      'получатель ' + maskChatId_(chatId) + (r.ok ? '' : ': ' + r.error), { order: orderNo, visitor: order.visitor });
     return { chatId: chatId, ok: r.ok, error: r.error };
   }) : [];
   results.filter(function (r) { return !r.ok; }).forEach(function (r) {
@@ -77,9 +79,12 @@ function notifyOrder_(order, orderNo) {
       const text = buildOrderText_(order, orderNo, false) + (sheetUrl ? '\n\nТаблица: ' + sheetUrl : '');
       const sent = sendMailFallback_(config.email, 'Заказ ' + orderNo + ': Telegram не сработал', text);
       email = { attempted: true, ok: sent.ok, error: sent.error };
+      logEvent_(sent.ok ? 'info' : 'error', sent.ok ? 'Письмо: отправлено' : 'Письмо: не отправлено',
+        sent.ok ? 'запасной канал, Telegram не сработал' : sent.error, { order: orderNo, visitor: order.visitor });
       if (!sent.ok) logError_('Письмо, заказ ' + orderNo, sent.error);
     } else {
       email = { attempted: false };
+      logEvent_('warn', 'Письмо: не отправлено', 'не задан ALERT_EMAIL', { order: orderNo, visitor: order.visitor });
       if (!telegramConfigured) logError_('Уведомления', 'Заказ ' + orderNo + ': не настроены ни Telegram, ни почта. Задайте свойства скрипта TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_IDS, ALERT_EMAIL.');
     }
   }
@@ -95,6 +100,7 @@ function showAlert_(title, lines) {
 
 // «🛒 Рынок → Отправить тестовое уведомление»
 function testNotify() {
+  logNow_('info', 'Меню: тестовое уведомление', '');
   const config = getNotifyConfig_();
   if (!config.token) {
     showAlert_('Тестовое уведомление', ['Не задан токен бота.', '', 'Откройте Расширения → Apps Script → ⚙️ «Настройки проекта» → «Свойства скрипта» и добавьте TELEGRAM_BOT_TOKEN.']);
@@ -106,14 +112,18 @@ function testNotify() {
   }
   const lines = config.chatIds.map(function (chatId) {
     const r = sendTelegram_(config.token, { chat_id: chatId, text: '✅ Проверка связи: уведомления о заказах работают.', disable_web_page_preview: true });
+    logEvent_(r.ok ? 'info' : 'error', r.ok ? 'Telegram: проверка отправлена' : 'Telegram: проверка не доставлена',
+      'получатель ' + maskChatId_(chatId) + (r.ok ? '' : ': ' + r.error));
     return (r.ok ? '✅ ' : '❌ ') + chatId + (r.ok ? ': сообщение отправлено' : ': ' + r.error);
   });
+  flushLog_();
   if (config.email) lines.push('', 'Запасная почта: ' + config.email);
   showAlert_('Тестовое уведомление', lines);
 }
 
 // «🛒 Рынок → Найти chat_id Telegram»: показывает, кто писал боту, и может сразу записать их id в настройки.
 function findTelegramChatIds() {
+  logNow_('info', 'Меню: поиск chat_id Telegram', '');
   const config = getNotifyConfig_();
   if (!config.token) {
     showAlert_('chat_id Telegram', ['Не задан токен бота.', '', 'Добавьте TELEGRAM_BOT_TOKEN в «Свойства скрипта».']);
@@ -145,16 +155,15 @@ function findTelegramChatIds() {
   const answer = ui.alert('chat_id Telegram', lines.join('\n'), ui.ButtonSet.YES_NO);
   if (answer === ui.Button.YES) {
     PropertiesService.getScriptProperties().setProperty(PROP_TELEGRAM_CHATS_, chats.map(function (c) { return c.id; }).join(','));
+    logNow_('info', 'chat_id Telegram сохранены', 'получателей ' + chats.length);
     getSpreadsheet_().toast('Сохранено. Проверьте: «🛒 Рынок → Отправить тестовое уведомление».', 'Готово', 8);
   }
 }
 
 // ===== Разрешения =====
 
-// Запускается вручную из редактора (выбрать функцию → «Выполнить»). При первом запуске после обновления
-// манифеста Google показывает окно с разрешениями; меню таблицы и веб-приложение такое окно не показывают.
-// Затем функция проверяет, что всё работает, и пишет итог в журнал и (если таблица открыта) окном.
-function authorize() {
+// Проверка разрешений и свойств. Возвращает строки отчёта; сама ничего не показывает.
+function permissionReport_() {
   const lines = ['Версия кода: ' + SCRIPT_VERSION_];
   const check = function (label, fn) {
     try {
@@ -173,9 +182,28 @@ function authorize() {
   lines.push((config.token ? '✅' : '❌') + ' Свойство TELEGRAM_BOT_TOKEN: ' + (config.token ? 'задано' : 'не задано'));
   lines.push((config.chatIds.length ? '✅' : '❌') + ' Свойство TELEGRAM_CHAT_IDS: ' + (config.chatIds.length ? 'получателей ' + config.chatIds.length : 'пусто (найдите через «🛒 Рынок → Найти chat_id Telegram»)'));
   lines.push((config.email ? '✅' : '❌') + ' Свойство ALERT_EMAIL: ' + (config.email ? 'задано' : 'не задано'));
-  console.log(lines.join('\n'));
-  try {
-    showAlert_('Проверка разрешений', lines);
-  } catch (err) { /* таблица не открыта: итог остался в журнале */ }
   return lines;
+}
+
+// Запускается вручную из редактора (выбрать функцию → «Выполнить»). При первом запуске Google сам показывает окно
+// с разрешениями: оно появляется только при запуске из редактора, меню таблицы и веб-приложение его не показывают.
+// Окон внутри не открываем (из редактора они могут зависнуть): итог — в «Журнале выполнения» и во всплывающей подсказке.
+function authorize() {
+  const lines = permissionReport_();
+  console.log(lines.join('\n'));
+  const failed = lines.filter(function (l) { return l.indexOf('❌') === 0; }).length;
+  logNow_(failed ? 'warn' : 'info', 'Проверка разрешений', failed ? 'проблем: ' + failed : 'всё в порядке');
+  try {
+    getSpreadsheet_().toast(failed ? 'Есть проблемы, подробности — в «Журнале выполнения».' : 'Всё в порядке.', 'Проверка разрешений', 10);
+  } catch (err) { /* таблица недоступна: итог остался в журнале выполнения */ }
+  return lines;
+}
+
+// «🛒 Рынок → Проверить разрешения»: то же из меню таблицы (окно разрешений здесь не появится, только отчёт)
+function menuCheckPermissions() {
+  const lines = permissionReport_();
+  const failed = lines.filter(function (l) { return l.indexOf('❌ ') === 0 && l.indexOf('Свойство') === -1; }).length;
+  if (failed) lines.push('', 'Чтобы выдать разрешения: Расширения → Apps Script → выберите функцию authorize → «Выполнить» → разрешите доступ.');
+  logNow_('info', 'Меню: проверка разрешений', failed ? 'проблем с разрешениями: ' + failed : 'разрешения в порядке');
+  showAlert_('Проверка разрешений', lines);
 }

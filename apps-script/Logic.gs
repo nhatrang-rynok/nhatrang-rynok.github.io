@@ -15,6 +15,7 @@ const SHEET_NAMES_ = {
   orders: 'Заказы',
   orderItems: 'Позиции заказов',
   errors: 'Ошибки',
+  log: 'Журнал',
 };
 
 // Заголовки колонок. Сервер ищет колонки по тексту заголовка, а не по номеру,
@@ -26,6 +27,7 @@ const HEADERS_ = {
   orders: ['Номер', 'Создан', 'Статус', 'Телефон', 'Связь', 'Имя', 'Комната', 'Комментарий', 'Состав', 'Сумма ₽', '18+ подтверждено', 'Уведомление', 'ID клиента', 'Заметки'],
   orderItems: ['Номер заказа', 'Создан', 'ID товара', 'Название', 'Кол-во', 'Цена ₽', 'Сумма ₽', 'Отменён'],
   errors: ['Когда', 'Где', 'Что'],
+  log: ['Время', 'Уровень', 'Источник', 'Событие', 'Подробности', 'Экран', 'Посетитель', 'Заказ', 'Устройство'],
 };
 
 const ORDER_STATUSES_ = ['Новый', 'Связались', 'Закуплено', 'Доставлено', 'Отменён'];
@@ -33,7 +35,7 @@ const STOCK_LABELS_ = ['В наличии', 'Под заказ', 'Сезон з�
 const MESSENGER_LABELS_ = { whatsapp: 'WhatsApp', telegram: 'Telegram', call: 'Звонок' };
 
 // Настройки, которые уходят на сайт. Остальные (курс, округление и т. д.) остаются на сервере.
-const PUBLIC_SETTING_KEYS_ = ['site_title', 'phone', 'whatsapp', 'telegram', 'orders_enabled', 'announcement', 'terms', 'done_text'];
+const PUBLIC_SETTING_KEYS_ = ['site_title', 'phone', 'whatsapp', 'telegram', 'orders_enabled', 'log_events', 'announcement', 'terms', 'done_text'];
 
 const DEFAULT_SETTINGS_ = {
   site_title: 'Рынок у отеля',
@@ -41,6 +43,7 @@ const DEFAULT_SETTINGS_ = {
   whatsapp: '84000000000',
   telegram: 'primer_operator',
   orders_enabled: true,
+  log_events: true,
   announcement: '',
   terms: '',
   done_text: 'С вами свяжутся по поводу заказа на оставленный контактный телефон. Ожидайте.',
@@ -79,6 +82,7 @@ const SETTING_HINTS_ = {
   whatsapp: 'Номер WhatsApp, только цифры, с кодом страны',
   telegram: 'Ник в Telegram без @',
   orders_enabled: 'Галочка: принимаем заказы. Снять, если вы заняты или уехали: на сайте появится «Сейчас заказы не принимаются»',
+  log_events: 'Галочка: записывать в лист «Журнал» заходы и нажатия на сайте (без имени и телефона гостя). Снять — сайт перестанет присылать такие события',
   announcement: 'Объявление на главной странице. Пусто — объявления нет',
   terms: 'Условия (доставка, оплата). Пусто — блок скрыт',
   done_text: 'Текст, который гость видит после заказа',
@@ -318,6 +322,7 @@ function parseSettings_(table) {
     whatsapp: String(get('whatsapp')).replace(/\D/g, ''),
     telegram: String(get('telegram')).replace(/[^A-Za-z0-9_]/g, ''),
     orders_enabled: parseBool_(raw.orders_enabled, DEFAULT_SETTINGS_.orders_enabled),
+    log_events: parseBool_(raw.log_events, DEFAULT_SETTINGS_.log_events),
     announcement: text('announcement', 300),
     terms: text('terms', 600),
     done_text: cleanText_(get('done_text'), 300, true),
@@ -646,6 +651,7 @@ function validateOrder_(body, index) {
       hasAdult: hasAdult,
       items: lines,
       total: Math.round(total),
+      visitor: cleanVisitorId_(b.visitorId),
     },
   };
 }
@@ -878,4 +884,123 @@ function permissionHint_(text) {
   return /разрешени|permission|authoriz|авторизаци/i.test(String(text == null ? '' : text))
     ? ' Выдайте разрешения: в редакторе Apps Script выберите функцию authorize и нажмите «Выполнить».'
     : '';
+}
+
+
+// ===== Журнал событий =====
+
+const LOG_LEVELS_ = { info: 'инфо', warn: 'внимание', error: 'ошибка' };
+const LOG_KEEP_ = 25000;               // сколько последних строк хранить в листе «Журнал»
+const LOG_TRIM_AT_ = 30000;            // когда строк станет больше, старые удаляются
+const LOG_MAX_PER_FLUSH_ = 200;        // за одну запись в таблицу
+const LOG_BATCH_MAX_EVENTS_ = 50;      // событий в одном пакете с сайта
+const LOG_DETAIL_MAX_ = 200;
+const LOG_VISITOR_LIMIT_ = 15;         // пакетов в минуту с одного посетителя
+const LOG_VISITOR_WINDOW_MS_ = 60 * 1000;
+const LOG_GLOBAL_LIMIT_ = 3000;        // пакетов в час всего
+const LOG_GLOBAL_WINDOW_MS_ = 60 * 60 * 1000;
+const VISITOR_ID_RE_ = /^[A-Za-z0-9_-]{8,64}$/;
+
+// События, которые сайт может прислать (остальные отбрасываются), и как они называются в журнале
+const CLIENT_EVENTS_ = {
+  visit: 'Вход на сайт',
+  view: 'Открыт экран',
+  click: 'Нажатие',
+  change: 'Выбор',
+  cart: 'Корзина',
+  catalog: 'Каталог (сайт)',
+  order: 'Заказ (сайт)',
+  error: 'Ошибка на сайте',
+  session: 'Выход с сайта',
+};
+
+function cleanVisitorId_(value) {
+  return typeof value === 'string' && VISITOR_ID_RE_.test(value) ? value : '';
+}
+
+function cleanOrderNo_(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9-]{1,12}$/.test(value) ? value : '';
+}
+
+// Номера телефонов в тексте журнала не нужны: гость и так записан в «Заказах», а в событиях сайта телефонов быть не должно.
+// Цены («2 450 ₽») не трогаем: прячем только длинные цепочки цифр.
+function maskPhones_(text) {
+  return String(text == null ? '' : text).replace(/\+?\d[\d\s().\-\u00A0]{7,}\d/g, '[номер]');
+}
+
+// chat_id в журнале показываем не целиком: …1234
+function maskChatId_(id) {
+  const s = String(id == null ? '' : id).replace(/^-/, '');
+  return s.length <= 4 ? s : '…' + s.slice(-4);
+}
+
+// «iPhone · Safari · 390×844 · ru» из строки User-Agent
+function shortUserAgent_(ua, width, height, lang) {
+  const s = String(ua == null ? '' : ua);
+  const os = /iPhone/.test(s) ? 'iPhone' : /iPad/.test(s) ? 'iPad' : /Android/.test(s) ? 'Android'
+    : /Windows/.test(s) ? 'Windows' : /Mac OS X|Macintosh/.test(s) ? 'Mac' : /Linux/.test(s) ? 'Linux' : '';
+  const browser = /Telegram/i.test(s) ? 'Telegram' : /Instagram/.test(s) ? 'Instagram' : /FBAN|FBAV/.test(s) ? 'Facebook'
+    : /YaBrowser/.test(s) ? 'Яндекс' : /SamsungBrowser/.test(s) ? 'Samsung' : /Edg\//.test(s) ? 'Edge'
+    : /OPR\/|Opera/.test(s) ? 'Opera' : /Firefox|FxiOS/.test(s) ? 'Firefox' : /Chrome|CriOS/.test(s) ? 'Chrome'
+    : /Safari/.test(s) ? 'Safari' : '';
+  const parts = [os, browser];
+  if (typeof width === 'number' && typeof height === 'number' && width > 0 && height > 0) parts.push(Math.round(width) + '×' + Math.round(height));
+  const language = cleanText_(lang, 12);
+  if (/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,4})?$/.test(language)) parts.push(language);
+  const text = parts.filter(Boolean).join(' · ');
+  return text || 'неизвестно';
+}
+
+// Короткая сводка состава заказа для журнала: «Манго 1,5 кг; Помело 2 шт» (без телефона и имени)
+function orderItemsShort_(order) {
+  return order.items.map(function (l) { return l.name + ' ' + formatNumberRu_(l.qty) + ' ' + l.unit; }).join('; ');
+}
+
+// Пакет событий с сайта: { visitorId, now, device: {ua, w, h, lang}, events: [{ t, k, d, s, o }] }
+// Возвращает { ok, visitor, entries: [запись журнала], dropped }. Время события пересчитывается по часам сервера:
+// у телефона часы могут врать, поэтому берётся только «сколько времени назад это было».
+function sanitizeClientBatch_(body, nowMs) {
+  const b = body && typeof body === 'object' ? body : {};
+  const visitor = cleanVisitorId_(b.visitorId);
+  if (!visitor) return { ok: false, visitor: '', entries: [], dropped: 0 };
+  const raw = Array.isArray(b.events) ? b.events : [];
+  const dev = b.device && typeof b.device === 'object' ? b.device : {};
+  const device = shortUserAgent_(dev.ua, parseNumber_(dev.w), parseNumber_(dev.h), dev.lang);
+  const clientNow = parseNumber_(b.now);
+  const entries = [];
+  raw.slice(0, LOG_BATCH_MAX_EVENTS_).forEach(function (e) {
+    if (!e || typeof e !== 'object' || typeof e.k !== 'string' || !Object.prototype.hasOwnProperty.call(CLIENT_EVENTS_, e.k)) return;
+    const t = parseNumber_(e.t);
+    let ms = nowMs;
+    if (t !== null && clientNow !== null) ms = Math.min(nowMs, Math.max(nowMs - 3600000, nowMs - (clientNow - t)));
+    entries.push({
+      ms: ms,
+      level: e.k === 'error' ? 'error' : 'info',
+      source: 'Сайт',
+      event: CLIENT_EVENTS_[e.k],
+      details: maskPhones_(cleanText_(e.d, LOG_DETAIL_MAX_)),
+      screen: cleanText_(e.s, 40),
+      visitor: visitor,
+      order: cleanOrderNo_(e.o),
+      device: device,
+    });
+  });
+  return { ok: true, visitor: visitor, entries: entries, dropped: Math.max(0, raw.length - entries.length) };
+}
+
+// Записи журнала → строки по заголовкам листа «Журнал»
+function buildLogRows_(headers, entries) {
+  return entries.map(function (e) {
+    return alignRow_(headers, {
+      'Время': new Date(e.ms),
+      'Уровень': LOG_LEVELS_[e.level] || LOG_LEVELS_.info,
+      'Источник': e.source,
+      'Событие': e.event,
+      'Подробности': maskPhones_(cleanText_(e.details, 500)),
+      'Экран': e.screen || '',
+      'Посетитель': String(e.visitor || '').slice(0, 8),
+      'Заказ': e.order || '',
+      'Устройство': e.device || '',
+    });
+  });
 }

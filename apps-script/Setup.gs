@@ -6,12 +6,12 @@
 
 const HEADER_COLOR_ = '#E3F1E8';
 const TABLE_TIMEZONE_ = 'Asia/Ho_Chi_Minh';
-const DATE_FORMAT_ = 'yyyy-mm-dd hh:mm';
+const DATE_FORMAT_ = 'yyyy-mm-dd hh:mm:ss';
 const CATEGORY_RANGE_ROWS_ = 100;
 const HEADER_PROTECTION_NOTE_ = 'Заголовки колонок (не переименовывать)';
 
 // Порядок листов в таблице
-const SHEET_ORDER_ = ['products', 'categories', 'settings', 'orders', 'orderItems', 'errors'];
+const SHEET_ORDER_ = ['products', 'categories', 'settings', 'orders', 'orderItems', 'errors', 'log'];
 
 // Свойства скрипта, которые владелец задаёт сам (значения здесь не хранятся)
 const OWNER_PROPERTIES_ = ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_IDS', 'ALERT_EMAIL'];
@@ -19,6 +19,7 @@ const OWNER_PROPERTIES_ = ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_IDS', 'ALERT_EMA
 // ===== Первоначальная настройка =====
 
 function setup() {
+  logNow_('info', 'Меню: первоначальная настройка', '');
   const ss = getSpreadsheet_();
   const report = { created: [], addedColumns: [], filled: [], removed: [] };
 
@@ -42,11 +43,14 @@ function setup() {
   applySettingsFormat_(sheets.settings);
   applyOrdersFormat_(sheets.orders);
   applyOrderItemsFormat_(sheets.orderItems);
+  applyErrorsFormat_(sheets.errors);
+  applyLogFormat_(sheets.log);
   SHEET_ORDER_.forEach(function (key) { protectHeader_(sheets[key]); });
 
   installTriggers_(ss);
   clearCatalogCache();
 
+  logNow_('info', 'Настройка завершена', 'создано листов ' + report.created.length + ', добавлено колонок ' + report.addedColumns.length);
   showSetupSummary_(report);
   return report;
 }
@@ -200,14 +204,15 @@ function applyCategoriesFormat_(sheet) {
 }
 
 function applySettingsFormat_(sheet) {
-  // Флажок «Принимаем заказы» вместо слова TRUE
+  // Флажки «Принимаем заказы» и «Вести журнал» вместо слова TRUE
   const keyCol = columnOf_(sheet, 'Ключ');
   const valueCol = columnOf_(sheet, 'Значение');
   const lastKeyRow = lastRowInColumn_(sheet, keyCol);
   if (keyCol && valueCol && lastKeyRow > 1) {
     const keys = sheet.getRange(2, keyCol, lastKeyRow - 1, 1).getValues();
     for (let i = 0; i < keys.length; i++) {
-      if (String(keys[i][0]).trim() === 'orders_enabled') {
+      const key = String(keys[i][0]).trim();
+      if (key === 'orders_enabled' || key === 'log_events') {
         sheet.getRange(i + 2, valueCol).setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
       }
     }
@@ -241,6 +246,37 @@ function applyOrdersFormat_(sheet) {
 function applyOrderItemsFormat_(sheet) {
   setCheckboxes_(sheet, 'Отменён');
   setDateFormat_(sheet, 'Создан');
+}
+
+function applyErrorsFormat_(sheet) {
+  setDateFormat_(sheet, 'Когда');
+  setWidth_(sheet, 'Когда', 150);
+  setWidth_(sheet, 'Где', 220);
+  setWidth_(sheet, 'Что', 520);
+}
+
+function applyLogFormat_(sheet) {
+  setDateFormat_(sheet, 'Время');
+  setWidth_(sheet, 'Время', 150);
+  setWidth_(sheet, 'Уровень', 80);
+  setWidth_(sheet, 'Источник', 80);
+  setWidth_(sheet, 'Событие', 200);
+  setWidth_(sheet, 'Подробности', 420);
+  setWidth_(sheet, 'Экран', 110);
+  setWidth_(sheet, 'Посетитель', 90);
+  setWidth_(sheet, 'Заказ', 80);
+  setWidth_(sheet, 'Устройство', 220);
+
+  // Ошибки и предупреждения подсвечиваются. Правила каждый раз заменяются целиком.
+  const levelCol = columnOf_(sheet, 'Уровень');
+  if (!levelCol) return;
+  const letter = columnLetter_(levelCol);
+  const area = sheet.getRange(2, 1, Math.max(sheet.getMaxRows() - 1, 1), Math.max(sheet.getLastColumn(), 1));
+  const rules = [
+    SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$' + letter + '2="' + LOG_LEVELS_.error + '"').setBackground('#F8D7D3').setRanges([area]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$' + letter + '2="' + LOG_LEVELS_.warn + '"').setBackground('#FFF4D6').setRanges([area]).build(),
+  ];
+  sheet.setConditionalFormatRules(rules);
 }
 
 // 1 → A, 27 → AA
@@ -282,11 +318,19 @@ function handleEdit(e) {
     if (!e || !e.range) return;
     const sheet = e.range.getSheet();
     const name = sheet.getName();
-    if (name !== SHEET_NAMES_.products && name !== SHEET_NAMES_.categories && name !== SHEET_NAMES_.settings) return;
+    if (name === SHEET_NAMES_.log || name === SHEET_NAMES_.errors) return; // записи самого журнала не логируем
+    const where = 'лист «' + name + '», ' + e.range.getA1Notation();
+    if (name !== SHEET_NAMES_.products && name !== SHEET_NAMES_.categories && name !== SHEET_NAMES_.settings) {
+      if (name === SHEET_NAMES_.orders) logEvent_('info', 'Правка таблицы', where + ' (заказы)');
+      return;
+    }
     clearCatalogCache();
+    logEvent_('info', 'Правка таблицы', where + ': кэш каталога сброшен');
     if (name === SHEET_NAMES_.products) stampUpdated_(sheet, e.range);
   } catch (err) {
     logError_('handleEdit', errorText_(err));
+  } finally {
+    flushLog_();
   }
 }
 
@@ -312,12 +356,14 @@ function stampUpdated_(sheet, range) {
 // ===== Пункты меню =====
 
 function menuRefreshSite() {
+  logNow_('info', 'Меню: обновить сайт', 'кэш каталога сброшен');
   clearCatalogCache();
   getSpreadsheet_().toast('Сайт покажет свежие данные при следующем открытии.', 'Готово', 5);
 }
 
 // Прогоняет те же проверки, что и сайт, и показывает проблемы таблицы
 function menuCheckSheet() {
+  logNow_('info', 'Меню: проверить таблицу', '');
   const ss = getSpreadsheet_();
   const result = assembleCatalog_({
     categoryValues: readSheetValues_(ss, SHEET_NAMES_.categories),

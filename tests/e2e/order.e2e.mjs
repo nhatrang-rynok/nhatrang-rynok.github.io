@@ -13,6 +13,7 @@ const browser = await launch();
 // ---------- Поддельный бэкенд ----------
 let script = [];          // очередь ответов на POST; пусто — успех
 let calls = [];           // полученные заказы
+const logCalls = [];      // пачки событий журнала
 let catalogPatch = d => d;
 const api = async (req, body) => {
   if (req.method === 'GET') {
@@ -21,6 +22,7 @@ const api = async (req, body) => {
     return { json: data };
   }
   const parsed = JSON.parse(body);
+  if (parsed.action === 'log') { logCalls.push(parsed); return { json: { ok: true, logged: parsed.events.length } }; } // журнал посещений: не заказ
   calls.push({ contentType: req.headers['content-type'], body: parsed });
   return script.shift() ?? { json: { ok: true, orderNo: 'N-0042', total: parsed.clientTotal, duplicate: false } };
 };
@@ -168,6 +170,7 @@ async function fillAndSend(page, phone = '8 000 000 00 00') {
   const body = calls[0]?.body;
   check(calls.length === 1 && calls[0].contentType.startsWith('text/plain'), 'API: один POST с Content-Type text/plain');
   check(body.action === 'order' && body.phone === '+70000000000' && body.messenger === 'whatsapp', `API: телефон нормализован (${body?.phone})`);
+  check(/^[A-Za-z0-9_-]{8,64}$/.test(body.visitorId || ''), `API: в заказе есть номер посетителя для журнала (${body?.visitorId})`);
   check(JSON.stringify(body.items) === JSON.stringify([{ id: 'fr-001', qty: 1.5 }, { id: 'fr-008', qty: 2 }]), 'API: состав заказа');
   check(body.name === 'Ольга' && body.room === '512' && body.comment === 'Манго поспелее' && body.website === '', 'API: имя, комната, комментарий, ловушка пуста');
   check(body.clientTotal === 860 && typeof body.catalogVersion === 'string' && body.clientOrderId.length >= 8, 'API: сумма, версия каталога, ID заказа');
@@ -199,7 +202,7 @@ async function fillAndSend(page, phone = '8 000 000 00 00') {
   let abortNext = true;
   const sentIds = [];
   await page.route('**/api', route => {
-    if (route.request().method() === 'POST') {
+    if (route.request().method() === 'POST' && !route.request().postData().includes('"action":"log"')) {
       sentIds.push(JSON.parse(route.request().postData()).clientOrderId);
       if (abortNext) { abortNext = false; return route.abort('internetdisconnected'); }
     }
@@ -358,6 +361,11 @@ for (const width of [360, 430]) {
   }
   await ctx.close();
 }
+
+// Журнал посещений: события дошли до сервера, но телефонов и имён в них нет
+check(logCalls.length > 0 && logCalls.every(b => /^[A-Za-z0-9_-]{8,64}$/.test(b.visitorId) && b.events.length > 0), `журнал: пачек событий ${logCalls.length}, у каждой есть посетитель`);
+check(!/000 000|70000000000|Ольга|Манго поспелее/.test(JSON.stringify(logCalls)), 'журнал: в событиях нет телефона, имени и комментария');
+check(logCalls.flatMap(b => b.events).some(e => e.k === 'order'), 'журнал: событие отправки заказа записано');
 
 await browser.close();
 real.server.close();

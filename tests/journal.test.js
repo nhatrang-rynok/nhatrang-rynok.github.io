@@ -1,0 +1,215 @@
+// Лист «Журнал»: события сервера и пакеты событий с сайта (Journal.gs) на подставных сервисах Google.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { loadGas, plain, parseCsv } from './gas-loader.js';
+import { createGoogle } from './gas-fakes.js';
+
+const FILES = ['Logic.gs', 'Catalog.gs', 'Orders.gs', 'Notify.gs', 'Journal.gs', 'Main.gs', 'Setup.gs'];
+const sampleCsv = parseCsv(readFileSync(new URL('../content/descriptions/sample-products.csv', import.meta.url), 'utf8'));
+const TOKEN = '123456789:AAFakeTokenForTestsOnly-0123456789abc';
+const VISITOR = 'v-test-0123456789';
+let counter = 0;
+
+function env({ chats = '111111111' } = {}) {
+  const google = createGoogle();
+  const g = loadGas(FILES, google.globals);
+  g.setup();
+  const products = google.ss.getSheetByName('Товары');
+  products.getRange(1, 1, sampleCsv.length, sampleCsv[0].length).setValues(sampleCsv.map(r => r.map(v => (v === 'TRUE' ? true : v === 'FALSE' ? false : v))));
+  google.props.set('TELEGRAM_BOT_TOKEN', TOKEN);
+  if (chats) google.props.set('TELEGRAM_CHAT_IDS', chats);
+  const log = () => {
+    const s = google.ss.getSheetByName('Журнал');
+    const headers = s.values()[0];
+    return s.values().slice(1).map(r => Object.fromEntries(headers.map((h, i) => [h, r[i]])));
+  };
+  const clearLog = () => google.ss.getSheetByName('Журнал').deleteRows(2, 100000);
+  const post = body => JSON.parse(g.doPost({ postData: { contents: JSON.stringify(body) } }).getContent());
+  const order = (o = {}) => ({
+    action: 'order', clientOrderId: `journal-order-${++counter}-abcdef`, phone: '+84 000 000 000', messenger: 'whatsapp', name: 'Ольга', room: '512',
+    comment: 'Секретный комментарий', adultConfirmed: false, items: [{ id: 'fr-001', qty: 1.5 }], visitorId: VISITOR, website: '', ...o,
+  });
+  const batch = (events, extra = {}) => ({
+    action: 'log', visitorId: VISITOR, now: 1_000_000, device: { ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit Version/17.0 Mobile Safari/604.1', w: 390, h: 844, lang: 'ru-RU' },
+    events, ...extra,
+  });
+  clearLog();
+  return { google, g, log, clearLog, post, order, batch, ss: google.ss };
+}
+
+const names = rows => rows.map(r => r['Событие']);
+
+test('setup создаёт лист «Журнал» с заголовками, формат времени с секундами', () => {
+  const e = env();
+  const sheet = e.ss.getSheetByName('Журнал');
+  assert.deepEqual(sheet.values()[0], ['Время', 'Уровень', 'Источник', 'Событие', 'Подробности', 'Экран', 'Посетитель', 'Заказ', 'Устройство']);
+  assert.ok(sheet.formats.some(f => f.col === 1 && f.format === 'yyyy-mm-dd hh:mm:ss'));
+  assert.ok(e.ss.getSheetByName('Ошибки').formats.some(f => f.col === 1 && f.format === 'yyyy-mm-dd hh:mm:ss'), 'в «Ошибках» время с секундами');
+});
+
+test('запрос каталога и ping попадают в журнал, время — Date', () => {
+  const e = env();
+  e.g.doGet({ parameter: { action: 'catalog' } });
+  e.g.doGet({ parameter: { action: 'catalog' } });
+  e.g.doGet({ parameter: { action: 'ping' } });
+  const rows = e.log();
+  assert.ok(names(rows).includes('Каталог собран из таблицы'));
+  assert.equal(rows.filter(r => r['Событие'] === 'Запрос каталога').length, 2);
+  assert.match(rows.filter(r => r['Событие'] === 'Запрос каталога')[1]['Подробности'], /отдан из кэша/);
+  assert.ok(names(rows).includes('Проверка связи (ping)'));
+  assert.ok(rows.every(r => Object.prototype.toString.call(r['Время']) === '[object Date]'));
+  assert.ok(rows.every(r => r['Источник'] === 'Сервер' && r['Уровень'] === 'инфо'));
+});
+
+test('заказ: получен → записан → Telegram → итог; без телефона, имени, комнаты и комментария', () => {
+  const e = env();
+  const r = e.post(e.order());
+  assert.equal(r.ok, true);
+  const rows = e.log();
+  const sequence = names(rows).filter(n => !n.startsWith('Каталог'));
+  assert.deepEqual(sequence.slice(-4), ['Заказ получен', 'Заказ записан в таблицу', 'Telegram: отправлено', 'Уведомление о заказе']);
+  const saved = rows.find(x => x['Событие'] === 'Заказ записан в таблицу');
+  assert.equal(saved['Заказ'], r.orderNo);
+  assert.equal(saved['Посетитель'], VISITOR.slice(0, 8));
+  assert.match(saved['Подробности'], /Манго/);
+  const text = JSON.stringify(rows);
+  for (const secret of ['84 000 000 000', 'Ольга', '512', 'Секретный комментарий', TOKEN, '111111111']) {
+    assert.ok(!text.includes(secret), `в журнале нет «${secret}»`);
+  }
+  assert.match(rows.find(x => x['Событие'] === 'Telegram: отправлено')['Подробности'], /…1111/);
+});
+
+test('заказ: отказ, повтор, ловушка для ботов и пауза — каждое событие в журнале', () => {
+  const e = env();
+  const o = e.order();
+  e.post(o);
+  e.clearLog();
+  e.post(o);
+  assert.deepEqual(names(e.log()).filter(n => n.includes('Повтор')), ['Повтор заказа']);
+  e.clearLog();
+  e.post(e.order({ phone: '123' }));
+  const bad = e.log().find(r => r['Событие'] === 'Заказ отклонён');
+  assert.equal(bad['Уровень'], 'внимание');
+  assert.match(bad['Подробности'], /VALIDATION.*phone/);
+  e.clearLog();
+  e.post(e.order({ website: 'http://spam' }));
+  assert.ok(names(e.log()).includes('Заказ: сработала ловушка для ботов'));
+});
+
+test('сбой Telegram: ошибка в журнале и в «Ошибках», токена нигде нет', () => {
+  const e = env();
+  e.google.state.fetchHandler = (url, options, reply) => reply(401, { ok: false, description: 'Unauthorized ' + TOKEN });
+  e.post(e.order());
+  const failed = e.log().find(r => r['Событие'] === 'Telegram: не доставлено');
+  assert.equal(failed['Уровень'], 'ошибка');
+  const all = JSON.stringify([e.log(), e.ss.getSheetByName('Ошибки').values()]);
+  assert.ok(!all.includes(TOKEN));
+  assert.ok(e.log().some(r => r['Уровень'] === 'ошибка' && r['Событие'].startsWith('Telegram, заказ')), 'ошибка из «Ошибок» продублирована в журнале');
+});
+
+test('«Ошибки»: время записывается с секундами', () => {
+  const e = env();
+  e.g.logError_('где-то', 'что-то');
+  const sheet = e.ss.getSheetByName('Ошибки');
+  assert.equal(Object.prototype.toString.call(sheet.get(2, 1)), '[object Date]');
+  assert.ok(sheet.formats.filter(f => f.col === 1).every(f => f.format === 'yyyy-mm-dd hh:mm:ss'));
+});
+
+test('пакет событий с сайта: записывается с устройством, лишнее отбрасывается, телефоны скрываются', () => {
+  const e = env();
+  const res = e.post(e.batch([
+    { t: 999_000, k: 'visit', d: 'новый, из t.me', s: 'home' },
+    { t: 999_500, k: 'click', d: 'Кнопка «В корзину» +7 926 000-00-00', s: 'product', o: 'N-0007' },
+    { t: 1_000_000, k: 'hack', d: 'не из списка' },
+    { t: 1_000_000, k: 'error', d: 'TypeError: x is not a function' },
+  ]));
+  assert.deepEqual(res, { ok: true, logged: 3 });
+  const rows = e.log();
+  assert.deepEqual(names(rows).filter(n => !n.startsWith('Каталог')), ['Вход на сайт', 'Нажатие', 'Ошибка на сайте']);
+  const click = rows.find(r => r['Событие'] === 'Нажатие');
+  assert.equal(click['Источник'], 'Сайт');
+  assert.equal(click['Посетитель'], VISITOR.slice(0, 8));
+  assert.equal(click['Заказ'], 'N-0007');
+  assert.equal(click['Экран'], 'product');
+  assert.equal(click['Устройство'], 'iPhone · Safari · 390×844 · ru-RU');
+  assert.ok(!click['Подробности'].includes('926'));
+  assert.match(click['Подробности'], /\[номер\]/);
+  assert.equal(rows.find(r => r['Событие'] === 'Ошибка на сайте')['Уровень'], 'ошибка');
+  // время события — «сколько назад» по часам телефона, пересчитанное на часы сервера: вход раньше клика
+  const visit = rows.find(r => r['Событие'] === 'Вход на сайт')['Время'].getTime();
+  assert.ok(click['Время'].getTime() - visit >= 400 && click['Время'].getTime() - visit <= 600, 'между событиями полсекунды');
+});
+
+test('пакет событий: неверный посетитель, настройка log_events=выкл, лимиты', () => {
+  const e = env();
+  assert.equal(e.post(e.batch([{ t: 1, k: 'visit' }], { visitorId: 'x' })).ok, false);
+  assert.equal(e.log().filter(r => r['Источник'] === 'Сайт').length, 0);
+
+  // 15 пакетов в минуту можно, 16-й отбрасывается
+  let limited = 0;
+  for (let i = 0; i < 17; i++) if (e.post(e.batch([{ t: 1_000_000, k: 'view', d: '#/' }])).limited) limited++;
+  assert.equal(limited, 2);
+  assert.equal(e.log().filter(r => r['Событие'] === 'Открыт экран').length, 15);
+
+  // Саня выключил журнал в настройках
+  const settings = e.ss.getSheetByName('Настройки');
+  const row = settings.values().findIndex(r => r[0] === 'log_events') + 1;
+  assert.ok(row > 1, 'настройка log_events есть');
+  settings.getRange(row, 2).setValue(false);
+  e.g.handleEdit({ range: settings.getRange(row, 2) });
+  e.clearLog();
+  const res = e.post(e.batch([{ t: 1_000_000, k: 'visit' }], { visitorId: 'another-visitor-01' }));
+  assert.deepEqual(res, { ok: true, logged: 0, disabled: true });
+  assert.equal(e.log().filter(r => r['Источник'] === 'Сайт').length, 0);
+});
+
+test('правка таблицы и пункты меню попадают в журнал', () => {
+  const e = env();
+  const sheet = e.ss.getSheetByName('Товары');
+  e.g.handleEdit({ range: sheet.getRange(2, 8) });
+  e.g.menuRefreshSite();
+  e.g.menuCheckSheet();
+  e.g.testNotify();
+  const list = names(e.log());
+  for (const n of ['Правка таблицы', 'Меню: обновить сайт', 'Меню: проверить таблицу', 'Меню: тестовое уведомление', 'Telegram: проверка отправлена']) {
+    assert.ok(list.includes(n), n);
+  }
+});
+
+test('лист «Журнал» создаётся сам, если настройку не повторяли', () => {
+  const e = env();
+  e.ss.deleteSheet(e.ss.getSheetByName('Журнал'));
+  e.g.doGet({ parameter: { action: 'ping' } });
+  const sheet = e.ss.getSheetByName('Журнал');
+  assert.ok(sheet);
+  assert.equal(sheet.values()[0][0], 'Время');
+  assert.ok(names(e.log()).includes('Проверка связи (ping)'));
+});
+
+test('журнал: старые строки удаляются, сбой блокировки или таблицы не ломает ответ', () => {
+  const e = env();
+  const sheet = e.ss.getSheetByName('Журнал');
+  sheet.maxRows = 40000;
+  const keep = plain(e.g.run('LOG_KEEP_'));
+  const trimAt = plain(e.g.run('LOG_TRIM_AT_'));
+  for (let r = 2; r <= trimAt + 1; r++) sheet.grid[r - 1] = [new Date(r), 'инфо', 'Сервер', 'старое', '', '', '', '', ''];
+  e.g.doGet({ parameter: { action: 'ping' } });
+  assert.ok(sheet.count() <= keep + 5 && sheet.count() >= keep - 5, `строк: ${sheet.count()}`);
+  assert.equal(sheet.values().at(-1)[3], 'Проверка связи (ping)');
+
+  e.google.state.lockFails = true;
+  assert.equal(JSON.parse(e.g.doGet({ parameter: { action: 'ping' } }).getContent()).ok, true);
+  e.google.state.lockFails = false;
+  e.ss.getSheetByName = () => { throw new Error('нет доступа'); };
+  assert.equal(JSON.parse(e.g.doGet({ parameter: { action: 'ping' } }).getContent()).ok, true);
+});
+
+test('authorize и «Проверить разрешения» оставляют след в журнале', () => {
+  const e = env();
+  e.g.authorize();
+  e.g.menuCheckPermissions();
+  const list = names(e.log());
+  assert.ok(list.includes('Проверка разрешений'));
+  assert.ok(list.includes('Меню: проверка разрешений'));
+});

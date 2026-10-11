@@ -6,8 +6,8 @@ import { loadGas, parseCsv } from '../gas-loader.js';
 import { createGoogle } from '../gas-fakes.js';
 
 const SHOTS = process.argv[2];
-const FILES = ['Logic.gs', 'Catalog.gs', 'Orders.gs', 'Notify.gs', 'Main.gs', 'Setup.gs'];
-const TOKEN = '8899330802:AAFlWsQlvYeW8wh4iL22JyA7qvyVeldntpU';
+const FILES = ['Logic.gs', 'Catalog.gs', 'Orders.gs', 'Notify.gs', 'Journal.gs', 'Main.gs', 'Setup.gs'];
+const TOKEN = '123456789:AAFakeTokenForTestsOnly-0123456789abc';
 const NB = / /g;
 
 // «Google»: таблица с примерами товаров и настройками
@@ -87,6 +87,8 @@ const card = (page, name) => page.locator('.list .card').filter({ has: page.loca
   check(sheet('Позиции заказов').count() === 3, 'в «Позиции заказов»: две строки');
   check(google.fetches.length === 1 && google.fetches[0].payload.text.includes('Новый заказ N-0001') && google.fetches[0].payload.reply_markup.inline_keyboard[0][1].url === 'https://t.me/+70000000000', 'в Telegram ушло сообщение с кнопками');
   check(await page.isHidden('#cart-count'), 'корзина очищена');
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide'))); // отправляет накопленный журнал сразу
+  await page.waitForTimeout(500);
   await ctx.close();
 }
 
@@ -168,6 +170,51 @@ const card = (page, name) => page.locator('.list .card').filter({ has: page.loca
   await page.waitForSelector('.card');
   check((await text(page, '.card:has(.card__link:text-is("Манго")) .card__price')) === '≈ 300 ₽ / кг', 'новая цена из таблицы: 90 000 ₫ → 300 ₽');
   await ctx.close();
+}
+
+// ---- 7. Журнал: заходы, экраны, нажатия, корзина и заказ видны в листе «Журнал», личных данных там нет
+{
+  const logRows = () => {
+    const s = sheet('Журнал');
+    const headers = s.values()[0];
+    return s.values().slice(1).map(r => Object.fromEntries(headers.map((h, i) => [h, r[i]])));
+  };
+  const siteEvents = () => logRows().filter(r => r['Источник'] === 'Сайт').map(r => r['Событие']);
+  const flushNow = async page => { await page.evaluate(() => window.dispatchEvent(new Event('pagehide'))); await page.waitForTimeout(500); };
+
+  const rows = logRows();
+  if (process.env.DUMP_LOG) rows.forEach(r => console.log([r['Время'].toISOString().slice(11, 23), r['Уровень'], r['Источник'], r['Событие'], r['Подробности'], r['Экран'], r['Посетитель'], r['Заказ']].join(' | ')));
+  const known = new Set(rows.map(r => r['Событие']));
+  for (const name of ['Заказ записан в таблицу', 'Telegram: отправлено', 'Заказ (сайт)', 'Запрос каталога', 'Вход на сайт', 'Открыт экран', 'Нажатие', 'Корзина', 'Каталог (сайт)']) {
+    check(known.has(name), `в «Журнале» есть «${name}»`);
+  }
+  const sent = rows.find(r => r['Событие'] === 'Заказ (сайт)' && /принят/.test(r['Подробности']));
+  check(Boolean(sent) && /^N-\d{4}$/.test(sent['Заказ']), `событие «Заказ (сайт)» привязано к номеру заказа (${sent?.['Заказ']})`);
+  check(rows.find(r => r['Событие'] === 'Вход на сайт')['Устройство'].includes('390×844'), 'устройство записано: ' + rows.find(r => r['Событие'] === 'Вход на сайт')['Устройство']);
+  const everything = JSON.stringify(rows);
+  for (const secret of ['8 000 000 00 00', '70000000000', '84 000 000 000', 'Ольга', 'поспелее', TOKEN]) {
+    check(!everything.includes(secret), `в «Журнале» нет «${secret}»`);
+  }
+
+  // Саня выключил журнал: сайт ничего не присылает и не пишет про запись
+  const settings = sheet('Настройки');
+  const row = settings.values().findIndex(r => r[0] === 'log_events') + 1;
+  settings.getRange(row, 2).setValue(false);
+  g.handleEdit({ range: settings.getRange(row, 2) });
+  const before = siteEvents().length;
+  const { ctx, page } = await open();
+  check((await page.getByText('Мы записываем, какие страницы открывают').count()) === 0, 'log_events=выкл: пометки про журнал на главной нет');
+  await page.click('.tile[href="#/c/fruits"]');
+  await waitH1(page, 'Фрукты');
+  await flushNow(page);
+  check(siteEvents().length === before, 'log_events=выкл: новых событий с сайта нет');
+  settings.getRange(row, 2).setValue(true);
+  g.handleEdit({ range: settings.getRange(row, 2) });
+  await ctx.close();
+
+  const second = await open();
+  check((await second.page.getByText('Мы записываем, какие страницы открывают').count()) === 1, 'log_events=вкл: на главной есть пометка про журнал');
+  await second.ctx.close();
 }
 
 await browser.close();

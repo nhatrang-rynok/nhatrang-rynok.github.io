@@ -84,6 +84,7 @@
 |---|---|
 | `config.js` | `export const API_URL = ''`, `FALLBACK_CONTACTS`, `APP_VERSION` |
 | `api.js` | `loadCatalog()` (кэш → сеть → событие обновления), `sendOrder(payload)` с таймаутом, режим заглушки |
+| `telemetry.js` | Журнал посещений: очередь событий (`track`, `trackView`), пачки на сервер с `keepalive`, `diffCart`, `describeClick`. Не отправляет ничего в режиме заглушки и при `log_events = false`; имени, телефона, комнаты и комментария в событиях нет (D71) |
 | `store.js` | Корзина `{id: qty}` в `localStorage` (ключ `cart.v1`), кэш каталога (`catalog.v1`), профиль (`profile.v1`); подписка на изменения; все обращения в try/catch |
 | `format.js` | `formatPrice(830) → "≈ 830 ₽"` (неразрывные пробелы, разделитель тысяч), `formatQty(1.5, 'кг') → "1,5 кг"`, склонения («1 товар, 2 товара, 5 товаров»), нормализация телефона |
 | `recommend.js` | `suggestForCart(cart, catalog, limit=6)` |

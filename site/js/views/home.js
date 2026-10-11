@@ -42,4 +42,9 @@ export function render(root, ctx) {
   if (settings.terms) root.append(el('section', { class: 'section' }, el('h2', { text: 'Условия' }), el('p', { class: 'pre', text: settings.terms })));
 
   root.append(el('section', { class: 'section' }, el('h2', { text: 'Связаться с нами' }), contactButtons(contacts)));
+
+  if (settings.log_events !== false) {
+    root.append(el('section', { class: 'section' },
+      el('p', { class: 'muted', text: 'Мы записываем, какие страницы открывают и на что нажимают, чтобы улучшать сайт. Имя и телефон в эту запись не попадают.' })));
+  }
 }

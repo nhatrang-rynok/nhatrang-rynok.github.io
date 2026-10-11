@@ -645,7 +645,7 @@ test('extractChatsFromUpdates_: личные чаты, группы, канал�
 });
 
 test('scrubSecrets_: токен не просачивается', () => {
-  const token = '8899330802:AAFlWsQlvYeW8wh4iL22JyA7qvyVeldntpU';
+  const token = '123456789:AAFakeTokenForTestsOnly-0123456789abc';
   assert.equal(g.scrubSecrets_(`Request failed for https://api.telegram.org/bot${token}/sendMessage`, [token]), 'Request failed for https://api.telegram.org/bot***/sendMessage');
   assert.equal(g.scrubSecrets_(`токен ${token} тут`, [token]), 'токен *** тут');
   assert.ok(!g.scrubSecrets_(`bot${token}`, []).includes('AAFl'), 'токен в адресе скрывается и без списка секретов');
@@ -694,4 +694,65 @@ test('permissionHint_: подсказка только для ошибок пр�
   assert.match(g.permissionHint_('You do not have permission to call UrlFetchApp.fetch'), /authorize/);
   assert.equal(g.permissionHint_('Forbidden: bot was blocked by the user'), '');
   assert.equal(g.permissionHint_(null), '');
+});
+
+// ---------------------------------------------------------------- журнал событий
+test('журнал: maskPhones_ прячет номера, но не цены и не короткие числа', () => {
+  assert.equal(g.maskPhones_('Звонить +7 (000) 000-00-00 или 84000000000'), 'Звонить [номер] или [номер]');
+  assert.equal(g.maskPhones_('≈ 2 450 ₽, 15 шт, 1,5 кг, год 2026'), '≈ 2 450 ₽, 15 шт, 1,5 кг, год 2026');
+});
+
+test('журнал: shortUserAgent_ понимает популярные устройства и не падает на мусоре', () => {
+  assert.equal(g.shortUserAgent_('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) Version/17 Mobile Safari/604', 390, 844, 'ru-RU'), 'iPhone · Safari · 390×844 · ru-RU');
+  assert.equal(g.shortUserAgent_('Mozilla/5.0 (Linux; Android 14) Chrome/120 Mobile Safari/537', 360, 780, 'ru'), 'Android · Chrome · 360×780 · ru');
+  assert.equal(g.shortUserAgent_('Mozilla/5.0 (Linux; Android 14) Chrome/120 Mobile Safari/537 YaBrowser/24', null, null, ''), 'Android · Яндекс');
+  assert.equal(g.shortUserAgent_(undefined, 'x', {}, 5), 'неизвестно');
+});
+
+test('журнал: sanitizeClientBatch_ — только известные события, обрезка, пересчёт времени по часам сервера', () => {
+  const now = 10_000_000;
+  const r = plain(g.sanitizeClientBatch_({
+    visitorId: 'abcdefgh-1234', now: 500, device: { ua: 'iPhone Safari', w: 390, h: 844, lang: 'ru' },
+    events: [
+      { t: 100, k: 'visit', d: 'x'.repeat(500), s: 'home' },
+      { t: 490, k: 'click', d: 'тел 84000000000', o: 'N-0001' },
+      { t: 495, k: 'нет такого' },
+      null,
+      { t: 500, k: 'error', o: '<script>' },
+    ],
+  }, now));
+  assert.equal(r.ok, true);
+  assert.equal(r.entries.length, 3);
+  assert.equal(r.dropped, 2);
+  assert.equal(r.entries[0].details.length, 200);
+  assert.equal(r.entries[0].ms, now - 400);
+  assert.equal(r.entries[1].ms, now - 10);
+  assert.equal(r.entries[1].details, 'тел [номер]');
+  assert.equal(r.entries[1].order, 'N-0001');
+  assert.equal(r.entries[2].order, '', 'номер заказа с лишними символами отброшен');
+  assert.equal(r.entries[2].level, 'error');
+  assert.equal(plain(g.sanitizeClientBatch_({ visitorId: 'short', events: [] }, now)).ok, false);
+  assert.equal(plain(g.sanitizeClientBatch_(null, now)).ok, false);
+});
+
+test('журнал: события из будущего и древние не уезжают за пределы часа', () => {
+  const now = 10_000_000;
+  const r = plain(g.sanitizeClientBatch_({ visitorId: 'abcdefgh-1234', now: 1000, events: [{ t: 5000, k: 'view' }, { t: -99999999, k: 'view' }] }, now));
+  assert.equal(r.entries[0].ms, now);
+  assert.equal(r.entries[1].ms, now - 3600000);
+});
+
+test('журнал: buildLogRows_ раскладывает по заголовкам и обрезает посетителя до 8 знаков', () => {
+  const headers = ['Событие', 'Время', 'Посетитель', 'Подробности', 'Уровень'];
+  const rows = plain(g.buildLogRows_(headers, [{ ms: 0, level: 'warn', source: 'Сайт', event: 'Нажатие', details: 'тел 84000000000', visitor: 'abcdefgh-1234', order: '', screen: '', device: '' }]));
+  assert.equal(rows[0][0], 'Нажатие');
+  assert.equal(rows[0][2], 'abcdefgh');
+  assert.equal(rows[0][3], 'тел [номер]');
+  assert.equal(rows[0][4], 'внимание');
+});
+
+test('журнал: maskChatId_ показывает только последние цифры', () => {
+  assert.equal(g.maskChatId_('123456789'), '…6789');
+  assert.equal(g.maskChatId_('-1001234567890'), '…7890');
+  assert.equal(g.maskChatId_('12'), '12');
 });

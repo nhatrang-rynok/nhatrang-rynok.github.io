@@ -18,12 +18,14 @@ function orderError_(error, message) {
 function handleOrder_(body) {
   // 1. Ловушка для ботов: притворяемся, что всё хорошо, и ничего не пишем
   if (body && typeof body.website === 'string' && body.website.trim() !== '') {
+    logEvent_('warn', 'Заказ: сработала ловушка для ботов', 'заказ не записан', { visitor: cleanVisitorId_(body.visitorId) });
     return { ok: true, orderNo: 'N-0000', total: 0, duplicate: false };
   }
 
   // 2–3. Приём включён? Заказ допустимый? Цены берём из каталога (кэш до 5 минут)
   let catalog = getCatalog_(false);
   if (catalog.settings && catalog.settings.orders_enabled === false) {
+    logEvent_('warn', 'Заказ отклонён', 'приём заказов выключен в «Настройках»', { visitor: cleanVisitorId_(body && body.visitorId) });
     return orderError_('ORDERS_PAUSED', 'Сейчас заказы не принимаются');
   }
   let checked = validateOrder_(body, indexProducts_(catalog));
@@ -31,18 +33,27 @@ function handleOrder_(body) {
     // Кэш мог устареть: перед отказом перечитываем таблицу
     catalog = getCatalog_(true);
     if (catalog.settings && catalog.settings.orders_enabled === false) {
+      logEvent_('warn', 'Заказ отклонён', 'приём заказов выключен в «Настройках»', { visitor: cleanVisitorId_(body && body.visitorId) });
       return orderError_('ORDERS_PAUSED', 'Сейчас заказы не принимаются');
     }
     checked = validateOrder_(body, indexProducts_(catalog));
   }
-  if (!checked.ok) return checked;
+  if (!checked.ok) {
+    logEvent_('warn', 'Заказ отклонён', checked.error + (checked.items && checked.items.length ? ', товары: ' + checked.items.join(', ') : '')
+      + (Object.keys(checked.fields || {}).length ? ', поля: ' + Object.keys(checked.fields).join(', ') : ''),
+      { visitor: cleanVisitorId_(body && body.visitorId) });
+    return checked;
+  }
   const order = checked.order;
+  logEvent_('info', 'Заказ получен', 'позиций ' + order.items.length + ', сумма ' + order.total + ' ₽, связь: ' + (MESSENGER_LABELS_[order.messenger] || order.messenger)
+    + (order.hasAdult ? ', есть 18+' : ''), { visitor: order.visitor });
 
   // 4. Запись под блокировкой: два заказа одновременно не получат один номер
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(ORDER_LOCK_WAIT_MS_);
   } catch (err) {
+    logEvent_('error', 'Заказ не записан', 'сервер занят: не получена блокировка за ' + ORDER_LOCK_WAIT_MS_ / 1000 + ' с', { visitor: order.visitor });
     return orderError_('SERVER', 'Сервер занят, повторите через несколько секунд');
   }
   let saved;
@@ -51,7 +62,13 @@ function handleOrder_(body) {
   } finally {
     lock.releaseLock();
   }
-  if (saved.reply) return saved.reply;
+  if (saved.reply) {
+    const r = saved.reply;
+    if (r.ok) logEvent_('info', 'Повтор заказа', 'тот же заказ отправлен ещё раз, дубль не создан', { visitor: order.visitor, order: r.orderNo });
+    else logEvent_('warn', 'Заказ отклонён', r.error + ': ' + r.message, { visitor: order.visitor });
+    return saved.reply;
+  }
+  logEvent_('info', 'Заказ записан в таблицу', 'лист «' + SHEET_NAMES_.orders + '», строка ' + saved.row + '; ' + orderItemsShort_(order), { visitor: order.visitor, order: saved.orderNo });
 
   // 6. Уведомление не может отменить заказ: заказ уже в таблице
   let status;
@@ -61,6 +78,7 @@ function handleOrder_(body) {
     status = 'ошибка уведомления: ' + scrubSecrets_(errorText_(err), []);
     logError_('Уведомление о заказе ' + saved.orderNo, status);
   }
+  logEvent_(status === 'ok' ? 'info' : 'warn', 'Уведомление о заказе', status, { visitor: order.visitor, order: saved.orderNo });
   try {
     if (saved.notifyColumn) saved.sheet.getRange(saved.row, saved.notifyColumn).setValue(sanitizeCell_(status));
   } catch (err) {
@@ -112,6 +130,8 @@ function saveOrder_(order) {
   const row = Math.max(lastFilledRow_(numbers), 1) + 1;
   ensureRows_(sheet, row);
   sheet.getRange(row, 1, 1, headers.length).setValues([alignRow_(headers, orderRowObject_(order, orderNo, nowMs, PENDING_NOTIFY_))]);
+  const createdColumn = columnOf_(sheet, 'Создан');
+  if (createdColumn) sheet.getRange(row, createdColumn).setNumberFormat(DATE_FORMAT_);
 
   // С этой минуты заказ принят: повтор вернёт тот же номер, лимиты учитывают его
   cache.put(idemKey, JSON.stringify({ orderNo: orderNo, total: order.total }), IDEMPOTENCY_TTL_S_);
@@ -174,6 +194,7 @@ function markOrderCancelled_(orderNo) {
 // Проверка приёма заказа и уведомлений без сайта. Заказ создаётся по-настоящему (номер, строки в таблице,
 // сообщение в Telegram), потом сразу помечается «Отменён» и в «Самое популярное» не попадает.
 function menuTestOrder() {
+  logNow_('info', 'Меню: тестовый заказ', '');
   try {
     const catalog = getCatalog_(true);
     const product = catalog.products.filter(function (p) { return p.stock !== 'out' && !p.adult; })[0];
@@ -210,4 +231,5 @@ function menuTestOrder() {
     logError_('Тестовый заказ', message);
     showAlert_('Тестовый заказ', ['Не получилось: ' + message]);
   }
+  flushLog_();
 }

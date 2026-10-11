@@ -8,6 +8,7 @@
     "whatsapp": "84000000000",
     "telegram": "primer_operator",
     "orders_enabled": true,
+    "log_events": true,
     "announcement": "",
     "terms": "",
     "done_text": "С вами свяжутся по поводу заказа на оставленный контактный телефон. Ожидайте."
