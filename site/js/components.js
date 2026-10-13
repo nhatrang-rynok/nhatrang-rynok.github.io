@@ -1,7 +1,8 @@
 // Общие кусочки интерфейса: карточки, кнопка «В корзину» со степпером, кнопки связи.
 import { el } from './dom.js';
 import { FALLBACK_CONTACTS } from '../config.js';
-import { formatUnitPrice, formatQty, imageSrc, whatsappUrl, telegramUrl, telUrl } from './format.js';
+import { formatUnitPrice, formatQty, imageSrc, pieceLine, whatsappUrl, whatsappAppUrl, telegramUrl, telegramAppUrl } from './format.js';
+import { replaceHash } from './nav.js';
 import { getQty, changeQty } from './store.js';
 import { retryCatalog } from './api.js';
 
@@ -72,6 +73,7 @@ export function productCard(product, ctx, heading = 'h2') {
       el(heading, { class: 'card__title' }, el('a', { class: 'card__link', href: `#/p/${product.id}`, text: product.name })),
       product.short && el('p', { class: 'card__short', text: product.short }),
       el('p', { class: 'card__price', text: formatUnitPrice(product.price, product.unit) }),
+      pieceLine(product) && el('p', { class: 'card__piece', text: pieceLine(product) }),
       badges(product),
       qtyControl(product, ctx)));
 }
@@ -84,6 +86,7 @@ export function stripCard(product, ctx) {
     el('div', { class: 'card__media' }, productImage(product, 400), overlay),
     el('h3', { class: 'card__title' }, el('a', { class: 'card__link', href: `#/p/${product.id}`, text: product.name })),
     el('p', { class: 'card__price', text: formatUnitPrice(product.price, product.unit) }),
+    pieceLine(product) && el('p', { class: 'card__piece', text: pieceLine(product) }),
     qtyControl(product, ctx, { compact: true }));
 }
 
@@ -93,12 +96,38 @@ export function strip(title, products, ctx) {
     el('div', { class: 'strip' }, products.map(p => stripCard(p, ctx))));
 }
 
-// WhatsApp, Telegram, звонок. settings — публичные настройки каталога или запасные контакты.
-export function contactButtons(settings = FALLBACK_CONTACTS) {
+// WhatsApp и Telegram. settings — публичные настройки каталога или запасные контакты. Ссылки с data-app на телефоне
+// открывают приложение сразу (links.js), на компьютере работает обычный адрес.
+export function contactButtons(settings = FALLBACK_CONTACTS, whatsappText = '') {
   return el('div', { class: 'contacts' },
-    el('a', { class: 'btn', href: whatsappUrl(settings.whatsapp), target: '_blank', rel: 'noopener', text: 'Написать в WhatsApp' }),
-    el('a', { class: 'btn', href: telegramUrl(settings.telegram), target: '_blank', rel: 'noopener', text: 'Написать в Telegram' }),
-    el('a', { class: 'btn', href: telUrl(settings.phone), text: 'Позвонить' }));
+    whatsappButton(settings.whatsapp, whatsappText, 'Написать в WhatsApp'),
+    el('a', { class: 'btn', href: telegramUrl(settings.telegram), 'data-app': telegramAppUrl(settings.telegram), target: '_blank', rel: 'noopener', text: 'Написать в Telegram' }));
+}
+
+export function whatsappButton(number, text, label, primary = false) {
+  return el('a', { class: `btn${primary ? ' btn--primary' : ''}`, href: whatsappUrl(number, text), 'data-app': whatsappAppUrl(number, text), target: '_blank', rel: 'noopener', text: label });
+}
+
+// Ряд значков категорий над списком товаров: переключение между категориями без возврата на главную.
+// Без названий (у каждого значка есть подпись для скринридера). Текущая категория выделена.
+export function categoryBar(categories, currentId) {
+  const bar = el('nav', { class: 'catbar', 'aria-label': 'Категории' },
+    categories.map(c => el('a', {
+      class: `catbar__item${c.id === currentId ? ' is-current' : ''}`,
+      href: `#/c/${c.id}`,
+      'aria-label': c.name,
+      'aria-current': c.id === currentId ? 'page' : null,
+      title: c.name,
+      text: c.icon,
+      // Меняем адрес без новой записи в истории: «Назад» по-прежнему ведёт туда, откуда пришли
+      onclick: e => {
+        if (c.id === currentId) { e.preventDefault(); return; }
+        e.preventDefault();
+        replaceHash(`/c/${c.id}`);
+      },
+    })));
+  queueMicrotask(() => bar.querySelector('.is-current')?.scrollIntoView?.({ inline: 'center', block: 'nearest' }));
+  return bar;
 }
 
 // Если каталога ещё нет, рисует «Загружаем…» или экран ошибки и возвращает true.

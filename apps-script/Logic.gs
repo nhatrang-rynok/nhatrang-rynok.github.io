@@ -21,7 +21,7 @@ const SHEET_NAMES_ = {
 // Заголовки колонок. Сервер ищет колонки по тексту заголовка, а не по номеру,
 // поэтому колонки можно переставлять и добавлять свои, но нельзя переименовывать эти.
 const HEADERS_ = {
-  products: ['ID', 'Показывать', 'Категория', 'Название', 'Коротко', 'Описание', 'Цена ₫', 'Цена ₽', 'Единица', 'Шаг', 'Минимум', 'Фото', 'Предупреждения', 'Где куплено', '18+', 'Хит', 'Похожие', 'Наличие', 'Порядок', 'Обновлено'],
+  products: ['ID', 'Показывать', 'Категория', 'Название', 'Коротко', 'Описание', 'Цена ₫', 'Цена ₽', 'Единица', 'Шаг', 'Минимум', 'Вес 1 шт., г', 'Фото', 'Предупреждения', 'Где куплено', '18+', 'Хит', 'Похожие', 'Наличие', 'Порядок', 'Обновлено'],
   categories: ['ID', 'Показывать', 'Название', 'Иконка', 'Подпись', 'Порядок'],
   settings: ['Ключ', 'Значение', 'Публично', 'Пояснение'],
   orders: ['Номер', 'Создан', 'Статус', 'Телефон', 'Связь', 'Имя', 'Комната', 'Комментарий', 'Состав', 'Сумма ₽', '18+ подтверждено', 'Уведомление', 'ID клиента', 'Заметки'],
@@ -48,6 +48,7 @@ const DEFAULT_SETTINGS_ = {
   terms: '',
   done_text: 'С вами свяжутся по поводу заказа на оставленный контактный телефон. Ожидайте.',
   rate_vnd_per_rub: 300,
+  rate_vnd_per_usd: 25000,
   rub_rounding: 10,
   popular_days: 30,
   popular_count: 8,
@@ -87,6 +88,7 @@ const SETTING_HINTS_ = {
   terms: 'Условия (доставка, оплата). Пусто — блок скрыт',
   done_text: 'Текст, который гость видит после заказа',
   rate_vnd_per_rub: 'Курс: сколько донгов в одном рубле. По нему считаются рублёвые цены из «Цена ₫»',
+  rate_vnd_per_usd: 'Курс: сколько донгов в одном долларе. По нему на карточке товара считается цена в долларах',
   rub_rounding: 'Рублёвая цена из донгов округляется вверх до этого числа (10 → 290, 300, 310…)',
   popular_days: 'За сколько последних дней считать «Самое популярное»',
   popular_count: 'Сколько товаров показывать в «Самом популярном»',
@@ -187,17 +189,17 @@ function normalizePhone_(raw) {
   return digits ? '+' + digits : '';
 }
 
-// Правила те же, что на сайте (site/js/order.js): 9–15 цифр с кодом страны;
-// 10 цифр на 9 без «+» — это российский номер без кода страны, такой не принимаем.
+// Правила те же, что на сайте (site/js/order.js): 9–15 цифр с кодом страны, код любой страны (D78);
+// 10 цифр на 9 без «+» — это номер без кода страны, такой не принимаем.
 function checkPhone_(raw) {
   const phone = normalizePhone_(raw);
   if (!phone) return { ok: false, phone: '', error: 'Введите номер телефона' };
   const digits = phone.slice(1);
   if (String(raw).trim().charAt(0) !== '+' && digits.length === 10 && digits.charAt(0) === '9') {
-    return { ok: false, phone: phone, error: 'Добавьте код страны, например +7' };
+    return { ok: false, phone: phone, error: 'Номер начинается с «+» и кода страны, например +7 или +380' };
   }
   if (!/^\+\d{9,15}$/.test(phone)) {
-    return { ok: false, phone: phone, error: 'Проверьте номер: с кодом страны, например +7 999 000-00-00' };
+    return { ok: false, phone: phone, error: 'Проверьте номер: с кодом страны, например +7 999 000-00-00 или +380 67 123 45 67' };
   }
   return { ok: true, phone: phone, error: '' };
 }
@@ -215,6 +217,28 @@ function computeRubPrice_(rub, vnd, rate, rounding) {
   let step = parseNumber_(rounding);
   if (step === null || step <= 0) step = 1;
   return Math.ceil(d / k / step - 1e-9) * step;
+}
+
+// Цена товара в донгах: «Цена ₫», а если её нет — рублёвая цена × курс (округлено до 100 ₫)
+function computeVndPrice_(vnd, rubPrice, rate) {
+  const d = parseNumber_(vnd);
+  if (d !== null && d > 0) return Math.round(d);
+  const k = parseNumber_(rate);
+  if (rubPrice === null || k === null || k <= 0) return 0;
+  return Math.round(rubPrice * k / 100) * 100;
+}
+
+// Цена в долларах (до центов) по курсу «донгов за доллар»
+function computeUsdPrice_(vndPrice, rateUsd) {
+  const k = parseNumber_(rateUsd);
+  if (!(vndPrice > 0) || k === null || k <= 0) return 0;
+  return Math.round(vndPrice / k * 100) / 100;
+}
+
+// Вес одной штуки в граммах («Вес 1 шт., г»): число от 1 до 100 000, иначе 0
+function parsePieceWeight_(value) {
+  const w = parseNumber_(value);
+  return w !== null && w >= 1 && w <= 100000 ? Math.round(w) : 0;
 }
 
 // ===== Связанные товары =====
@@ -334,6 +358,7 @@ function parseSettings_(table) {
   return {
     public: pub,
     rate: num('rate_vnd_per_rub', 0.0001),
+    rateUsd: num('rate_vnd_per_usd', 0.0001),
     rounding: num('rub_rounding', 1),
     popularDays: num('popular_days', 1),
     popularCount: Math.floor(num('popular_count', 1)),
@@ -423,6 +448,7 @@ function buildProducts_(table, categories, allCategoryIds, settings, errors) {
     if (min < step) min = step;
     const sort = parseNumber_(cell_(table, row, 'Порядок'));
 
+    const vnd = computeVndPrice_(cell_(table, row, 'Цена ₫'), price, settings.rate);
     products.push({
       id: rawId,
       cat: cat,
@@ -430,6 +456,9 @@ function buildProducts_(table, categories, allCategoryIds, settings, errors) {
       short: cleanText_(cell_(table, row, 'Коротко'), LIMITS_.short),
       desc: cleanText_(cell_(table, row, 'Описание'), LIMITS_.desc, true),
       price: price,
+      vnd: vnd,
+      usd: computeUsdPrice_(vnd, settings.rateUsd),
+      pw: parsePieceWeight_(cell_(table, row, 'Вес 1 шт., г')),
       unit: cleanText_(cell_(table, row, 'Единица'), 20) || 'шт',
       step: step,
       min: min,
@@ -633,7 +662,7 @@ function validateOrder_(body, index) {
     if (p.adult) hasAdult = true;
     lines.push({ id: p.id, name: p.name, unit: p.unit, price: p.price, qty: it.qty, sum: sum, adult: Boolean(p.adult) });
   });
-  if (hasAdult && b.adultConfirmed !== true) fields.adult = 'Подтвердите, что вам есть 18 лет';
+  // Подтверждение возраста на сайте не спрашиваем: заказывают только взрослые (D78)
   if (Object.keys(fields).length) {
     return { ok: false, error: 'VALIDATION', message: 'Проверьте введённые данные', fields: fields, items: [] };
   }
@@ -647,7 +676,7 @@ function validateOrder_(body, index) {
       name: text.name,
       room: text.room,
       comment: text.comment,
-      adultConfirmed: b.adultConfirmed === true,
+      adultConfirmed: hasAdult,
       hasAdult: hasAdult,
       items: lines,
       total: Math.round(total),
@@ -695,7 +724,7 @@ function buildOrderText_(order, orderNo, asHtml) {
     rows.push('• ' + esc(l.name) + ' — ' + formatNumberRu_(l.qty) + ' ' + esc(l.unit) + ' × ' + formatRub_(l.price) + ' = ' + formatRub_(l.sum));
   });
   rows.push(bold('Итого ≈ ' + formatRub_(order.total)));
-  if (order.hasAdult) rows.push('🔞 Возраст подтверждён');
+  if (order.hasAdult) rows.push('🔞 В заказе есть товары 18+');
   if (order.comment) {
     rows.push('');
     rows.push('💬 ' + esc(order.comment));
@@ -764,7 +793,7 @@ function orderRowObject_(order, orderNo, nowMs, notifyStatus) {
     'Комментарий': order.comment,
     'Состав': buildOrderComposition_(order),
     'Сумма ₽': order.total,
-    '18+ подтверждено': order.hasAdult ? order.adultConfirmed : '',
+    '18+ подтверждено': order.hasAdult ? true : '',
     'Уведомление': notifyStatus,
     'ID клиента': order.clientOrderId,
     'Заметки': '',
@@ -1002,5 +1031,36 @@ function buildLogRows_(headers, entries) {
       'Заказ': e.order || '',
       'Устройство': e.device || '',
     });
+  });
+}
+
+
+// ===== Статусы заказов гостя =====
+
+const ORDER_STATUS_IDS_MAX_ = 20;
+
+// «id1,id2» из адреса → до 20 верных clientOrderId без повторов
+function parseOrderIdList_(value) {
+  const out = [];
+  String(value == null ? '' : value).split(',').forEach(function (part) {
+    const id = part.trim();
+    if (CLIENT_ORDER_ID_RE_.test(id) && out.indexOf(id) === -1 && out.length < ORDER_STATUS_IDS_MAX_) out.push(id);
+  });
+  return out;
+}
+
+// Статусы по таблице «Заказы» (values — getValues(), первая строка — заголовки).
+// Возвращает [{ id, found, orderNo, status }] в том же порядке, что ids. Телефон, имя и состав не отдаются.
+function matchOrderStatuses_(ids, values) {
+  const table = tableFromValues_(values);
+  const byClient = newMap_();
+  table.rows.forEach(function (row) {
+    const clientId = String(cell_(table, row, 'ID клиента')).trim();
+    if (clientId) byClient[clientId] = { orderNo: String(cell_(table, row, 'Номер')).trim(), status: String(cell_(table, row, 'Статус')).trim() };
+  });
+  return ids.map(function (id) {
+    const hit = byClient[id];
+    return hit ? { id: id, found: true, orderNo: hit.orderNo, status: ORDER_STATUSES_.indexOf(hit.status) === -1 ? ORDER_STATUSES_[0] : hit.status }
+      : { id: id, found: false, orderNo: '', status: '' };
   });
 }

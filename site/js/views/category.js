@@ -1,6 +1,6 @@
 import { el } from '../dom.js';
-import { catalogGate, notFound, productCard } from '../components.js';
-import { productsOfCategory } from '../catalog.js';
+import { catalogGate, categoryBar, notFound, productCard } from '../components.js';
+import { productsOfCategory, visibleCategories } from '../catalog.js';
 
 export const title = 'Категория';
 
@@ -13,6 +13,7 @@ export function render(root, ctx) {
     return;
   }
 
+  root.append(categoryBar(visibleCategories(ctx.catalog), category.id));
   root.append(el('h1', {}, el('span', { 'aria-hidden': 'true', text: `${category.icon} ` }), category.name));
   if (category.note) root.append(el('p', { class: 'muted', text: category.note }));
 

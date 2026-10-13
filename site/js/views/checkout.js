@@ -1,11 +1,11 @@
 import { el } from '../dom.js';
 import { FALLBACK_CONTACTS } from '../../config.js';
-import { catalogGate, contactButtons } from '../components.js';
+import { catalogGate, contactButtons, whatsappButton } from '../components.js';
 import { productMap } from '../catalog.js';
-import { formatItemsCount, formatPrice, formatQty, whatsappUrl } from '../format.js';
+import { formatItemsCount, formatPrice, formatQty } from '../format.js';
 import { buildOrderPayload, buildOrderText, LIMITS, splitCart, validateOrderForm } from '../order.js';
 import { loadCatalog, sendOrder } from '../api.js';
-import { clearCart, clearClientOrderId, getCart, getClientOrderId, readProfile, removeItem, saveProfile } from '../store.js';
+import { addOrder, clearCart, clearClientOrderId, getCart, getClientOrderId, readProfile, removeItem, saveProfile } from '../store.js';
 
 export const title = 'Оформление заказа';
 
@@ -25,14 +25,13 @@ function freshState() {
       name: profile.name || '',
       room: profile.room || '',
       comment: '',
-      adultConfirmed: false,
     },
     sending: false,
     notice: null,        // {text, tone}
     failure: null,       // {kind: 'server' | 'rate'}
     fieldErrors: {},
     paused: false,
-    waHref: '',
+    waText: '',
   };
 }
 
@@ -64,8 +63,8 @@ export function render(root, ctx) {
   }
 
   function showErrors(form, errors) {
-    for (const node of form.querySelectorAll('[data-field], .check')) {
-      const name = node.dataset.field || 'adult';
+    for (const node of form.querySelectorAll('[data-field]')) {
+      const name = node.dataset.field;
       const message = errors[name];
       const errorEl = node.querySelector('.field__error');
       const control = node.querySelector('input, textarea');
@@ -78,7 +77,7 @@ export function render(root, ctx) {
   function build() {
     root.replaceChildren();
     const { draft } = state;
-    const { available, total, hasAdult } = splitCart(getCart(), products);
+    const { available, total } = splitCart(getCart(), products);
 
     root.append(el('h1', { text: 'Оформление заказа' }));
 
@@ -102,7 +101,7 @@ export function render(root, ctx) {
         el('li', { text: `${l.product.name} — ${formatQty(l.qty, l.product.unit)} — ${formatPrice(l.sum)}` }))),
       el('a', { href: '#/cart', text: 'Изменить корзину' })));
 
-    const phone = el('input', { class: 'input', id: 'f-phone', name: 'phone', type: 'tel', inputmode: 'tel', autocomplete: 'tel', placeholder: '+7 999 000-00-00', required: true, value: draft.phone });
+    const phone = el('input', { class: 'input', id: 'f-phone', name: 'phone', type: 'tel', inputmode: 'tel', autocomplete: 'tel', placeholder: '+ код страны и номер', required: true, value: draft.phone });
     const name = el('input', { class: 'input', id: 'f-name', name: 'name', type: 'text', autocomplete: 'given-name', maxlength: LIMITS.name, value: draft.name });
     const room = el('input', { class: 'input', id: 'f-room', name: 'room', type: 'text', autocomplete: 'off', maxlength: LIMITS.room, value: draft.room });
     const comment = el('textarea', { class: 'input', id: 'f-comment', name: 'comment', rows: '3', maxlength: LIMITS.comment, placeholder: 'Например: когда удобно получить, спелость фруктов, дата выезда' });
@@ -125,16 +124,6 @@ export function render(root, ctx) {
         el('label', { class: 'choice', for: `m-${value}`, text: label }),
       ]));
 
-    const adultBox = hasAdult && el('div', { class: 'check' },
-      el('div', { class: 'check__row' },
-        el('input', {
-          class: 'check__input', type: 'checkbox', id: 'f-adult', name: 'adult', checked: draft.adultConfirmed,
-          'aria-describedby': 'err-adult',
-          onchange: e => { draft.adultConfirmed = e.target.checked; },
-        }),
-        el('label', { for: 'f-adult', text: 'Мне есть 18 лет' })),
-      el('p', { class: 'field__error', id: 'err-adult', role: 'alert', hidden: true }));
-
     const submit = el('button', { class: 'btn btn--primary btn--block btn--big', type: 'submit', text: state.sending ? 'Отправляем…' : 'Отправить заказ' });
     if (state.sending) {
       submit.disabled = true;
@@ -142,14 +131,13 @@ export function render(root, ctx) {
     }
 
     const form = el('form', { class: 'form', novalidate: true },
-      field({ name: 'phone', label: 'Ваш телефон', hint: 'С кодом страны: +7 … или +84 …', control: phone }),
+      field({ name: 'phone', label: 'Ваш телефон', hint: 'Номер любой страны, с кодом: например +7 …, +380 …, +375 …', control: phone }),
       el('div', { class: 'field' },
         el('p', { class: 'field__label', id: 'messenger-label', text: 'Как с вами связаться' }),
         choices),
       field({ name: 'name', label: 'Имя', control: name, optional: true }),
       field({ name: 'room', label: 'Номер комнаты', control: room, optional: true }),
       field({ name: 'comment', label: 'Комментарий', control: comment, optional: true }),
-      adultBox,
       el('div', { class: 'hp', 'aria-hidden': 'true' }, el('label', { for: 'f-hp', text: 'Оставьте это поле пустым' }), trap),
       state.failure && failurePanel(),
       submit,
@@ -157,7 +145,7 @@ export function render(root, ctx) {
 
     form.addEventListener('submit', event => {
       event.preventDefault();
-      onSubmit(form, { available, total, hasAdult }, trap.value);
+      onSubmit(form, { available, total }, trap.value);
     });
     root.append(form);
     showErrors(form, state.fieldErrors);
@@ -171,33 +159,33 @@ export function render(root, ctx) {
         : 'Не получилось отправить заказ. Проверьте интернет и попробуйте ещё раз.' }),
       el('div', { class: 'contacts' },
         !rate && el('button', { class: 'btn btn--primary', type: 'submit', text: 'Попробовать ещё раз' }),
-        el('a', { class: 'btn', href: state.waHref || whatsappUrl(settings.whatsapp), target: '_blank', rel: 'noopener', text: 'Отправить через WhatsApp' })));
+        whatsappButton(settings.whatsapp, state.waText, 'Отправить через WhatsApp')));
   }
 
-  async function onSubmit(form, { available, total, hasAdult }, trapValue) {
+  async function onSubmit(form, { available, total }, trapValue) {
     if (state.sending) return;
-    const result = validateOrderForm(state.draft, { needAdult: hasAdult });
+    const result = validateOrderForm(state.draft);
     state.fieldErrors = result.errors;
     showErrors(form, result.errors);
     if (!result.ok) {
-      const first = result.errors.phone ? form.querySelector('#f-phone') : form.querySelector('#f-adult');
-      first?.focus();
+      form.querySelector('#f-phone')?.focus();
       return;
     }
 
     state.failure = null;
     state.notice = null;
     state.sending = true;
-    state.waHref = whatsappUrl(settings.whatsapp, buildOrderText({ lines: available, total, values: result.values }));
+    state.waText = buildOrderText({ lines: available, total, values: result.values });
     saveProfile(result.values);
     build();
 
     const signature = JSON.stringify([result.values.phone, available.map(l => [l.product.id, l.qty])]);
+    const clientOrderId = getClientOrderId(signature);
     const payload = buildOrderPayload({
       values: result.values,
       lines: available,
       total,
-      clientOrderId: getClientOrderId(signature),
+      clientOrderId,
       catalogVersion: ctx.catalog.version,
       website: trapValue,
     });
@@ -206,6 +194,14 @@ export function render(root, ctx) {
 
     if (res.ok) {
       const orderNo = String(res.orderNo || '').replace(/[^A-Za-z0-9-]/g, '') || 'OK';
+      // Заказ запоминаем на этом устройстве для вкладки «Заказы» (без телефона и имени)
+      addOrder({
+        id: clientOrderId,
+        no: orderNo,
+        ts: Date.now(),
+        total,
+        items: available.map(l => ({ id: l.product.id, name: l.product.name, unit: l.product.unit, qty: l.qty, price: l.product.price })),
+      });
       clearCart();
       clearClientOrderId();
       state = null;

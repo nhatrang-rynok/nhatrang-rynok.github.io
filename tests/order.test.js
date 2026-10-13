@@ -26,7 +26,8 @@ test('телефон: проверка', () => {
   assert.equal(checkPhone('+7000000000000000').ok, false, 'слишком длинный');
   const noCode = checkPhone('999 000 00 00');
   assert.equal(noCode.ok, false);
-  assert.match(noCode.error, /код страны/);
+  assert.match(noCode.error, /кода страны/);
+  for (const phone of ['+380 67 123 45 67', '+375 29 123-45-67', '+7 701 123 45 67', '+49 1512 3456789', '+1 (415) 555-0100']) assert.equal(checkPhone(phone).ok, true, phone);
   assert.equal(checkPhone('+999 000 00 00').ok, true, 'с плюсом правило про 10 цифр не действует');
 });
 
@@ -36,7 +37,7 @@ test('форма: ошибки и очистка значений', () => {
   assert.ok(bad.errors.phone);
 
   const ok = validateOrderForm({
-    phone: '8 000 000 00 00', messenger: 'viber', name: `  ${'я'.repeat(80)} `, room: ' 512 ', comment: 'Манго\nпоспелее\u0000!', adultConfirmed: false,
+    phone: '8 000 000 00 00', messenger: 'viber', name: `  ${'я'.repeat(80)} `, room: ' 512 ', comment: 'Манго\nпоспелее\u0000!',
   });
   assert.equal(ok.ok, true);
   assert.equal(ok.values.phone, '+70000000000');
@@ -46,13 +47,11 @@ test('форма: ошибки и очистка значений', () => {
   assert.equal(ok.values.comment, 'Манго\nпоспелее !', 'переносы строк в комментарии сохраняются');
 });
 
-test('форма: 18+ обязательна, только если в корзине алкоголь', () => {
-  const fields = { phone: '+84 000 000 000', messenger: 'call' };
-  assert.equal(validateOrderForm(fields, { needAdult: false }).ok, true);
-  const need = validateOrderForm(fields, { needAdult: true });
-  assert.equal(need.ok, false);
-  assert.ok(need.errors.adult);
-  assert.equal(validateOrderForm({ ...fields, adultConfirmed: true }, { needAdult: true }).ok, true);
+test('форма: подтверждение возраста не нужно (D78)', () => {
+  const r = validateOrderForm({ phone: '+84 000 000 000', messenger: 'call' });
+  assert.equal(r.ok, true);
+  assert.equal('adultConfirmed' in r.values, false);
+  assert.equal(validateOrderForm({ phone: '+84 000 000 000' }).errors.adult, undefined);
 });
 
 test('корзина: доступные, недоступные, итог, 18+', () => {
@@ -70,18 +69,18 @@ test('корзина: доступные, недоступные, итог, 18+'
 
 test('тело запроса соответствует контракту', () => {
   const { available, total } = splitCart({ 'fr-001': 1.5, 'al-001': 1 }, products);
-  const values = validateOrderForm({ phone: '+84 000 000 000', messenger: 'telegram', name: 'Ольга', room: '512', comment: 'Тест', adultConfirmed: true }, { needAdult: true }).values;
+  const values = validateOrderForm({ phone: '+84 000 000 000', messenger: 'telegram', name: 'Ольга', room: '512', comment: 'Тест' }).values;
   const payload = buildOrderPayload({ values, lines: available, total, clientOrderId: 'id-1', catalogVersion: 'v1' });
   assert.deepEqual(payload, {
     action: 'order', clientOrderId: 'id-1', phone: '+84000000000', messenger: 'telegram', name: 'Ольга', room: '512', comment: 'Тест',
-    adultConfirmed: true, items: [{ id: 'fr-001', qty: 1.5 }, { id: 'al-001', qty: 1 }], clientTotal: 1170, catalogVersion: 'v1', website: '',
+    items: [{ id: 'fr-001', qty: 1.5 }, { id: 'al-001', qty: 1 }], clientTotal: 1170, catalogVersion: 'v1', website: '',
   });
   assert.equal(buildOrderPayload({ values, lines: available, total, clientOrderId: 'x', website: 'spam' }).website, 'spam');
 });
 
 test('текст заказа для WhatsApp', () => {
   const { available, total } = splitCart({ 'fr-001': 2, 'al-001': 1 }, products);
-  const full = validateOrderForm({ phone: '+84 000 000 000', name: 'Ольга', room: '512', comment: 'Манго поспелее', adultConfirmed: true }).values;
+  const full = validateOrderForm({ phone: '+84 000 000 000', name: 'Ольга', room: '512', comment: 'Манго поспелее' }).values;
   assert.equal(buildOrderText({ lines: available, total, values: full }), [
     'Здравствуйте! Хочу заказать:',
     '• Манго — 2 кг',

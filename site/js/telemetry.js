@@ -124,7 +124,9 @@ export function initTelemetry() {
   const ref = (() => {
     try { return document.referrer ? new URL(document.referrer).hostname : ''; } catch { return ''; }
   })();
-  tracker.track('visit', `${visitor.returning ? 'повторный' : 'новый'} посетитель${ref && ref !== location.hostname ? `, из ${ref}` : ''}`);
+  // Метка ?src=qr в ссылке из QR-кода: видно, сколько гостей пришли по нему
+  const src = (new URLSearchParams(location.search).get('src') || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 20);
+  tracker.track('visit', `${visitor.returning ? 'повторный' : 'новый'} посетитель${ref && ref !== location.hostname ? `, из ${ref}` : ''}${src ? `, метка: ${src}` : ''}`);
 
   document.addEventListener('click', e => {
     const text = describeClick(e.target);

@@ -125,13 +125,9 @@ test('заказ: цены берутся из таблицы, а не из за
   assert.ok(!e.allText().includes('ВЗЛОМ'));
 });
 
-test('заказ: алкоголь требует 18+ и подтверждение пишется в таблицу', () => {
+test('заказ с алкоголем принимается без подтверждения возраста (D78), в таблице и Telegram есть пометка', () => {
   const e = env();
-  const bad = e.post(e.order({ items: [{ id: 'al-001', qty: 1 }] }));
-  assert.equal(bad.error, 'VALIDATION');
-  assert.ok(bad.fields.adult);
-  assert.equal(e.sheet('Заказы').count(), 1);
-  const ok = e.post(e.order({ items: [{ id: 'al-001', qty: 1 }], adultConfirmed: true }));
+  const ok = e.post(e.order({ items: [{ id: 'al-001', qty: 1 }], adultConfirmed: false }));
   assert.equal(ok.ok, true);
   assert.equal(e.row('Заказы', 1)['18+ подтверждено'], true);
   assert.ok(e.google.fetches[0].payload.text.includes('🔞'));

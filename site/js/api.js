@@ -56,7 +56,7 @@ function normalizeCatalog(c) {
     ...c,
     popular: Array.isArray(c.popular) ? c.popular : [],
     products: c.products.map(p => ({
-      short: '', desc: '', img: '', warn: '', src: '', adult: false, stock: 'in', rel: [], sort: 0, step: 1, min: 0,
+      short: '', desc: '', img: '', warn: '', src: '', adult: false, stock: 'in', rel: [], sort: 0, step: 1, min: 0, vnd: 0, usd: 0, pw: 0,
       ...p,
       rel: Array.isArray(p.rel) ? p.rel : [],
     })),
@@ -174,6 +174,23 @@ async function checkOrderStatus(clientOrderId) {
     }
   }
   return null;
+}
+
+// Статусы заказов гостя из таблицы: [{ id, found, orderNo, status }] или null, если сервер не ответил.
+// В режиме заглушки ничего не спрашиваем: статусы лежат только в браузере.
+export async function fetchOrderStatuses(ids) {
+  if (isMockMode || ids.length === 0) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch(`${API_URL}?action=orders&ids=${ids.map(encodeURIComponent).join(',')}`, { signal: controller.signal });
+    const data = await res.json();
+    return data?.ok === true && Array.isArray(data.orders) ? data.orders : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // Режим заглушки: заказ никуда не уходит. Сценарии ошибок включаются адресом: ?mock=error|paused|rate|unavailable|validation

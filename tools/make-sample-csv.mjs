@@ -23,7 +23,7 @@ const rows = catalog.products.map(p => {
   const values = {
     'ID': p.id, 'Показывать': 'TRUE', 'Категория': p.cat, 'Название': p.name, 'Коротко': p.short, 'Описание': p.desc,
     'Цена ₫': inVnd ? p.price * RATE : '', 'Цена ₽': inVnd ? '' : p.price,
-    'Единица': p.unit, 'Шаг': p.step, 'Минимум': p.min, 'Фото': '', 'Предупреждения': p.warn, 'Где куплено': p.src,
+    'Единица': p.unit, 'Шаг': p.step, 'Минимум': p.min, 'Вес 1 шт., г': p.pw || '', 'Фото': '', 'Предупреждения': p.warn, 'Где куплено': p.src,
     '18+': p.adult ? 'TRUE' : 'FALSE', 'Хит': catalog.popular.includes(p.id) ? 'TRUE' : 'FALSE',
     'Похожие': p.rel.join(', '), 'Наличие': STOCK[p.stock], 'Порядок': p.sort, 'Обновлено': '',
   };
@@ -31,5 +31,5 @@ const rows = catalog.products.map(p => {
 });
 
 mkdirSync(new URL('content/descriptions/', root), { recursive: true });
-writeFileSync(new URL('content/descriptions/sample-products.csv', root), `${headers.join(',')}\n${rows.join('\n')}\n`, 'utf8');
+writeFileSync(new URL('content/descriptions/sample-products.csv', root), `${headers.map(csvCell).join(",")}\n${rows.join('\n')}\n`, 'utf8');
 console.log(`готово: content/descriptions/sample-products.csv (${rows.length} товаров)`);

@@ -57,8 +57,8 @@ test('setup: начальные категории и настройки', () =>
   assert.equal(e.sheet('Категории').count(), 7);
   assert.deepEqual(cats.slice(1, 7).map(r => [r[0], r[1]]), [['fruits', true], ['alcohol', true], ['sweets', false], ['coffee', false], ['souvenirs', false], ['pharmacy', false]]);
   const settings = e.sheet('Настройки').values();
-  assert.deepEqual(settings.slice(1, 14).map(r => r[0]), Object.keys(plain(e.g.run('DEFAULT_SETTINGS_'))));
-  assert.ok(settings.slice(1, 14).every(r => r[3] !== ''), 'у каждой настройки есть пояснение');
+  assert.deepEqual(settings.slice(1, 15).map(r => r[0]), Object.keys(plain(e.g.run('DEFAULT_SETTINGS_'))));
+  assert.ok(settings.slice(1, 15).every(r => r[3] !== ''), 'у каждой настройки есть пояснение');
   assert.equal(settings.find(r => r[0] === 'orders_enabled')[1], true);
 });
 
@@ -481,7 +481,7 @@ test('setup: на листах с FALSE в пустых строках ниче�
   assert.equal(cats.count(), 7);
   assert.equal(cats.get(4, 2), true);
   const settings = e.sheet('Настройки');
-  assert.equal(settings.count(), 14, 'настройки не продублированы');
+  assert.equal(settings.count(), 15, 'настройки не продублированы');
 });
 
 test('каждый .gs файл начинается со своего имени (по нему владелец проверяет, что вставил нужный код)', () => {

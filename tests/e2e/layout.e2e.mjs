@@ -28,12 +28,12 @@ const { server: srvB, base: baseB } = await startServer({
 const CART = { 'fr-001': 100, 'fr-002': 1.5, 'al-001': 2, 'fr-010': 1, 'zz-999': 1 };
 const SCREENS = [
   ['home', '#/'], ['cat-fruits', '#/c/fruits'], ['cat-alcohol', '#/c/alcohol'], ['product-warn', '#/p/fr-001'],
-  ['product-adult', '#/p/al-001'], ['cart', '#/cart'], ['checkout', '#/checkout'], ['done', '#/done/N-0042'],
+  ['product-adult', '#/p/al-001'], ['cart', '#/cart'], ['checkout', '#/checkout'], ['done', '#/done/N-0042'], ['orders', '#/orders'],
 ];
 
 async function audit(page, tag) {
   const result = await page.evaluate(() => {
-    const out = { brokenWords: [], overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth, clipped: [], small: [], noName: [], noAlt: [], fonts: [], h1: document.querySelectorAll('h1').length, skipped: [] };
+    const out = { brokenWords: [], overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth, clipped: [], small: [], noName: [], noAlt: [], fonts: [], h1: [...document.querySelectorAll('h1')].filter(h => !h.closest('[inert]')).length, skipped: [] };
     const visible = e => { const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none' && r.right > 0 && r.left < innerWidth; };
     const label = e => (e.id && document.querySelector(`label[for="${e.id}"]`)) || e.closest('label');
     const nameOf = e => (e.getAttribute('aria-label') || e.textContent || '').trim() || (e.id && document.querySelector(`label[for="${e.id}"]`)?.textContent.trim()) || e.getAttribute('title') || '';

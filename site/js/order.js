@@ -19,16 +19,16 @@ export function normalizePhone(raw) {
   return digits ? `+${digits}` : '';
 }
 
-// Телефон гостя. Правила сервера (docs/05-api.md) плюс подсказка про код страны: 10 цифр, начиная с 9, — это российский номер без +7.
+// Телефон гостя: код любой страны (D78). Правила те же, что на сервере (docs/05-api.md): 9–15 цифр; 10 цифр на 9 без «+» — номер без кода страны.
 export function checkPhone(raw) {
   const phone = normalizePhone(raw);
   if (!phone) return { ok: false, phone, error: 'Введите номер телефона' };
   const digits = phone.slice(1);
   if (!String(raw).trim().startsWith('+') && digits.length === 10 && digits.startsWith('9')) {
-    return { ok: false, phone, error: 'Добавьте код страны, например +7' };
+    return { ok: false, phone, error: 'Номер начинается с «+» и кода страны, например +7 или +380' };
   }
   if (!/^\+\d{9,15}$/.test(phone)) {
-    return { ok: false, phone, error: 'Проверьте номер: с кодом страны, например +7 999 000-00-00' };
+    return { ok: false, phone, error: 'Проверьте номер: с кодом страны, например +7 999 000-00-00 или +380 67 123 45 67' };
   }
   return { ok: true, phone, error: '' };
 }
@@ -36,13 +36,12 @@ export function checkPhone(raw) {
 const clean = (v, max) => String(v ?? '').replace(/[\u0000-\u001F\u007F]+/g, ' ').trim().slice(0, max);
 const cleanMultiline = (v, max) => String(v ?? '').replace(/[\u0000-\u0009\u000B-\u001F\u007F]+/g, ' ').trim().slice(0, max);
 
-// Проверка формы. needAdult — в корзине есть товар 18+.
-export function validateOrderForm(fields, { needAdult = false } = {}) {
+// Проверка формы. Подтверждение возраста не спрашиваем: заказывают только взрослые (D78).
+export function validateOrderForm(fields) {
   const errors = {};
   const phone = checkPhone(fields.phone);
   if (!phone.ok) errors.phone = phone.error;
   const messenger = MESSENGERS.includes(fields.messenger) ? fields.messenger : 'whatsapp';
-  if (needAdult && !fields.adultConfirmed) errors.adult = 'Подтвердите, что вам есть 18 лет';
   return {
     ok: Object.keys(errors).length === 0,
     errors,
@@ -52,7 +51,6 @@ export function validateOrderForm(fields, { needAdult = false } = {}) {
       name: clean(fields.name, LIMITS.name),
       room: clean(fields.room, LIMITS.room),
       comment: cleanMultiline(fields.comment, LIMITS.comment),
-      adultConfirmed: Boolean(fields.adultConfirmed),
     },
   };
 }
@@ -85,7 +83,6 @@ export function buildOrderPayload({ values, lines, total, clientOrderId, catalog
     name: values.name,
     room: values.room,
     comment: values.comment,
-    adultConfirmed: values.adultConfirmed,
     items: lines.map(l => ({ id: l.product.id, qty: l.qty })),
     clientTotal: total,
     catalogVersion: catalogVersion || '',

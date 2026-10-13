@@ -103,6 +103,17 @@ function handleOrderStatus_(id) {
   return found ? { ok: true, found: true, orderNo: found.orderNo, total: found.total } : { ok: true, found: false };
 }
 
+// GET ?action=orders&ids=id1,id2: статусы заказов гостя из таблицы «Заказы» (для вкладки «Мои заказы» на сайте).
+// Отдаются только номер и статус; телефон, имя и состав — никогда. Идентификатор заказа — случайный UUID, его знает только отправитель.
+function handleMyOrders_(idsParam) {
+  const ids = parseOrderIdList_(idsParam);
+  if (ids.length === 0) return { ok: true, orders: [] };
+  const sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES_.orders);
+  const orders = matchOrderStatuses_(ids, sheet ? sheet.getDataRange().getValues() : []);
+  logEvent_('info', 'Проверка статусов заказов', 'запрошено ' + ids.length + ', найдено ' + orders.filter(function (o) { return o.found; }).length);
+  return { ok: true, orders: orders };
+}
+
 // Выполняется под блокировкой. Возвращает { reply } (дубль или лимит) либо данные записанного заказа.
 function saveOrder_(order) {
   const cache = CacheService.getScriptCache();

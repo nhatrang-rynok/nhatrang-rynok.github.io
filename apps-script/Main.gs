@@ -4,7 +4,7 @@
 
 // Версия кода: меняется при каждом изменении файлов в apps-script/. Видна в ответе ?action=ping и в окне authorize,
 // чтобы сразу понять, какой код сейчас работает.
-const SCRIPT_VERSION_ = '2026-10-12.6';
+const SCRIPT_VERSION_ = '2026-10-13.1';
 
 const ERROR_LOG_KEEP_ = 500;     // сколько последних строк хранить в листе «Ошибки»
 const ERROR_LOG_TRIM_AT_ = 600;  // когда строк станет больше, старые удаляются
@@ -27,6 +27,7 @@ function doGet(e) {
         return out(catalog);
       }
       if (action === 'orderStatus') return out(handleOrderStatus_(e.parameter.id));
+      if (action === 'orders') return out(handleMyOrders_(e.parameter.ids));
       logEvent_('warn', 'Неизвестный запрос', 'GET, action=' + cleanText_(action, 40));
       return out({ ok: false, error: 'UNKNOWN_ACTION', message: 'Неизвестное действие' });
     } catch (err) {

@@ -31,7 +31,7 @@ const config = 'export const API_URL = "__BASE__api";\nexport const SITE_TITLE =
 const { server, base } = await startServer({ files: { 'config.js': config }, api });
 const browser = await launch();
 const text = async (page, sel) => ((await page.textContent(sel)) || '').replace(NB, ' ').replace(/\s+/g, ' ').trim();
-const waitH1 = (page, t) => page.waitForFunction(x => document.querySelector('h1')?.textContent.includes(x), t);
+const waitH1 = (page, t) => page.waitForFunction(x => [...document.querySelectorAll('h1')].some(h => h.textContent.includes(x)), t);
 
 async function open() {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, locale: 'ru-RU' });
@@ -95,7 +95,7 @@ const card = (page, name) => page.locator('.list .card').filter({ has: page.loca
   await ctx.close();
 }
 
-// ---- 3. Алкоголь и 18+
+// ---- 3. Алкоголь: без подтверждения возраста, номер любой страны, отметка в таблице
 {
   const { ctx, page } = await open();
   await page.click('.tile[href="#/c/alcohol"]');
@@ -103,14 +103,13 @@ const card = (page, name) => page.locator('.list .card').filter({ has: page.loca
   await card(page, 'Ром кокосовый, 0,7 л').locator('.qty__add').click();
   await page.goto(base + '#/checkout');
   await page.waitForSelector('#f-phone');
-  await page.fill('#f-phone', '+84 000 000 000');
-  await page.click('button[type="submit"]');
-  check((await text(page, '#err-adult')).includes('18'), 'алкоголь: сайт требует галочку');
-  await page.check('#f-adult');
+  check((await page.locator('#f-adult').count()) === 0, 'алкоголь: галочки «Мне есть 18 лет» нет');
+  await page.fill('#f-phone', '+375 29 000-00-00');
   await page.click('button[type="submit"]');
   await waitH1(page, 'принят');
   const o = sheet('Заказы').values();
-  check(sheet('Заказы').count() === 3 && o[2][o[0].indexOf('18+ подтверждено')] === true, 'в таблице отмечено подтверждение 18+');
+  check(sheet('Заказы').count() === 3 && o[2][o[0].indexOf('Телефон')] === "'+375290000000", 'номер Беларуси принят и записан');
+  check(o[2][o[0].indexOf('18+ подтверждено')] === true, 'в таблице у заказа с алкоголем отметка 18+');
   await ctx.close();
 }
 
@@ -272,6 +271,72 @@ const card = (page, name) => page.locator('.list .card').filter({ has: page.loca
   await page.waitForTimeout(500);
   const jr = sheet('Журнал').values();
   check(jr.some(r => r[3] === 'Каталог (сайт)' && /^диагностика: онлайн/.test(r[4])) && jr.some(r => /JSONP/.test(r[4]) && /диагностика/.test(r[4])), 'diag: результат записан в «Журнал»');
+  await ctx.close();
+}
+
+// ---- 9. Цены в долларах и донгах и вес штуки приходят с сервера (по курсам из «Настроек»)
+{
+  const { ctx, page } = await open();
+  await page.goto(base + '#/p/fr-001');
+  await page.waitForSelector('#modal-body .product__alt');
+  check((await text(page, '#modal-body .product__alt')) === '$3,60 · 90.000 ₫ / кг', `карточка: доллары и донги (цена Манго правили в разделе 6) (${await text(page, '#modal-body .product__alt')})`);
+  check((await text(page, '#modal-body .product__piece')) === '1 шт. = 300 г = 27.000 ₫', 'карточка: «1 шт. = 300 г = 27.000 ₫» из колонки «Вес 1 шт., г»');
+  await ctx.close();
+
+  // Саня поменял курс доллара в «Настройках»
+  const settings = sheet('Настройки');
+  const row = settings.values().findIndex(r => r[0] === 'rate_vnd_per_usd') + 1;
+  check(row > 1, 'в «Настройках» есть rate_vnd_per_usd');
+  settings.getRange(row, 2).setValue(28000);
+  g.handleEdit({ range: settings.getRange(row, 2) });
+  const again = await open();
+  await again.page.goto(base + '#/p/fr-001');
+  await again.page.waitForSelector('#modal-body .product__alt');
+  check((await text(again.page, '#modal-body .product__alt')) === '$3,21 · 90.000 ₫ / кг', 'курс из «Настроек» учтён: $3,21');
+  await again.ctx.close();
+}
+
+// ---- 10. «Мои заказы»: статусы приходят из таблицы, без телефона и имени
+{
+  const { ctx, page } = await open();
+  await page.goto(base + '#/c/fruits');
+  await page.waitForSelector('.card');
+  await card(page, 'Манго').locator('.qty__add').click();
+  await page.goto(base + '#/checkout');
+  await page.waitForSelector('#f-phone');
+  await page.fill('#f-phone', '+380 67 000 00 11');
+  await page.fill('#f-name', 'Тарас');
+  await page.click('button[type="submit"]');
+  await waitH1(page, 'принят');
+  const no = (await text(page, 'h1')).match(/N-\d{4}/)[0];
+  const orders = sheet('Заказы');
+  const rowOf = () => orders.values().findIndex(r => r[0] === no) + 1;
+  const statusCol = orders.values()[0].indexOf('Статус') + 1;
+
+  await page.click('#orders-link');
+  await page.waitForSelector('.order');
+  check((await text(page, '.order .status')) === 'Принят, скоро свяжемся', 'статус «Новый» → «Принят, скоро свяжемся»');
+
+  orders.getRange(rowOf(), statusCol).setValue('Закуплено');
+  await page.reload();
+  await page.waitForFunction(() => document.querySelector('.order .status')?.textContent.includes('Куплено'));
+  check((await text(page, '.order .status')) === 'Куплено, везём', 'статус из таблицы «Закуплено» → «Куплено, везём»');
+  check((await page.locator('[data-repeat]').count()) === 0, 'пока заказ активен, «Повторить» нет');
+
+  orders.getRange(rowOf(), statusCol).setValue('Доставлено');
+  await page.reload();
+  await page.waitForFunction(() => document.querySelector('.status--done'));
+  check((await page.locator('section h2').allTextContents()).join('|') === 'Завершённые' && (await page.locator('[data-repeat]').count()) === 1, '«Доставлено» → «Завершённые» с кнопкой «Повторить»');
+  await page.locator('[data-repeat]').click();
+  await waitH1(page, 'Корзина');
+  check((await page.locator('.cart-line').count()) === 1 && (await text(page, '.cart-line__title')) === 'Манго', 'повтор: Манго снова в корзине');
+
+  // Ответ сервера о статусах не содержит персональных данных
+  const ids = await page.evaluate(() => JSON.parse(localStorage.getItem('orders.v1')).map(o => o.id));
+  const reply = JSON.stringify(JSON.parse(g.doGet({ parameter: { action: 'orders', ids: ids.join(',') } }).getContent()));
+  check(reply.includes(no) && !reply.includes('380') && !reply.includes('Тарас'), 'GET orders отдаёт только номер и статус');
+  const unknown = JSON.parse(g.doGet({ parameter: { action: 'orders', ids: 'unknown-order-id-123' } }).getContent());
+  check(unknown.ok && unknown.orders[0].found === false, 'чужой или неизвестный номер: «не найден»');
   await ctx.close();
 }
 

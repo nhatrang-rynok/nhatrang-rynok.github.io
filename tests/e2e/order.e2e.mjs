@@ -7,7 +7,7 @@ const sample = JSON.parse(readFileSync(new URL('../../site/data/catalog.sample.j
 const NB = / /g;
 const text = async (page, sel) => ((await page.textContent(sel)) || '').replace(NB, ' ').replace(/\s+/g, ' ').trim();
 const shot = (page, name) => SHOTS && page.screenshot({ path: `${SHOTS}/${name}.png` });
-const waitH1 = (page, t) => page.waitForFunction(x => document.querySelector('h1')?.textContent.includes(x), t);
+const waitH1 = (page, t) => page.waitForFunction(x => [...document.querySelectorAll('h1')].some(h => h.textContent.includes(x)), t);
 const browser = await launch();
 
 // ---------- Поддельный бэкенд ----------
@@ -101,7 +101,7 @@ const card = (page, name) => page.locator('.list .card').filter({ has: page.loca
   await shot(page, 't14-03-checkout-error');
   await page.fill('#f-phone', '999 000 00 00');
   await page.click('button[type="submit"]');
-  check((await text(page, '#err-phone')).includes('код страны'), 'телефон без кода страны: подсказка');
+  check((await text(page, '#err-phone')).includes('кода страны'), 'телефон без кода страны: подсказка');
   await page.fill('#f-phone', '+7 000 000-00-00');
   await page.fill('#f-name', 'Ольга');
   await page.locator('label[for="m-telegram"]').click();
@@ -110,7 +110,7 @@ const card = (page, name) => page.locator('.list .card').filter({ has: page.loca
   await waitH1(page, 'принят');
   check((await text(page, 'h1')) === 'Заказ № TEST-0001 принят', `экран «Готово»: «${await text(page, 'h1')}»`);
   check((await text(page, '.done__text')).startsWith('С вами свяжутся по поводу заказа'), 'текст «С вами свяжутся…»');
-  check((await page.locator('.contacts a').count()) === 3, 'на «Готово» есть кнопки связи');
+  check((await page.locator('.contacts a').count()) === 2, 'на «Готово» есть кнопки связи (без «Позвонить»)');
   check(await page.isHidden('#cart-bar') && await page.isHidden('#cart-count'), 'после заказа корзина очищена');
   await shot(page, 't14-04-done');
 
@@ -211,7 +211,6 @@ async function fillAndSend(page, phone = '8 000 000 00 00') {
   });
   await page.goto(real.base + '#/checkout');
   await page.waitForSelector('#f-phone');
-  await page.check('#f-adult');
   await page.fill('#f-name', 'Ольга');
   await fillAndSend(page, '+84 000 000 000');
   await page.waitForSelector('#failure');
@@ -226,7 +225,7 @@ async function fillAndSend(page, phone = '8 000 000 00 00') {
   await page.getByRole('button', { name: 'Попробовать ещё раз' }).click();
   await waitH1(page, 'принят');
   check(sentIds.length === 2 && sentIds[0] === sentIds[1] && calls.length === 1, 'повтор отправляется с тем же clientOrderId');
-  check(calls[0].body.adultConfirmed === true, '18+ подтверждено в запросе');
+  check(!('adultConfirmed' in calls[0].body), 'подтверждение возраста в запросе не передаётся');
   await ctx.close();
 }
 
@@ -245,20 +244,16 @@ async function fillAndSend(page, phone = '8 000 000 00 00') {
 }
 
 {
-  // 3.5 Галочка 18+
+  // 3.5 Подтверждения возраста нет: алкоголь заказывается как обычный товар
   calls = []; script = [];
   const { ctx, page } = await open(real.base, { cart: { 'al-001': 1 } });
   await page.goto(real.base + '#/checkout');
   await page.waitForSelector('#f-phone');
-  await page.fill('#f-phone', '+84 000 000 000');
-  await page.click('button[type="submit"]');
-  check((await text(page, '#err-adult')).includes('18'), 'алкоголь без галочки: ошибка');
-  check((await page.evaluate(() => document.activeElement.id)) === 'f-adult' && calls.length === 0, 'фокус на галочке, запрос не ушёл');
-  await shot(page, 't14-06-adult-error');
-  await page.check('#f-adult');
+  check((await page.locator('#f-adult').count()) === 0, 'алкоголь: галочки «Мне есть 18 лет» нет');
+  await page.fill('#f-phone', '+380 67 123 45 67');
   await page.click('button[type="submit"]');
   await waitH1(page, 'принят');
-  check(calls.length === 1, 'с галочкой заказ уходит');
+  check(calls.length === 1 && calls[0].body.phone === '+380671234567', 'алкоголь и номер Украины: заказ уходит без галочки');
   await ctx.close();
 }
 

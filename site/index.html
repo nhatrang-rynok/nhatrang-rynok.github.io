@@ -31,8 +31,14 @@
   <a class="skip-link" href="#app">К содержимому</a>
 
   <header class="app-header" id="app-header">
-    <button class="icon-btn" id="back-btn" type="button" aria-label="Назад" hidden>←</button>
+    <button class="icon-btn back-btn" id="back-btn" type="button" aria-label="Назад" hidden>
+      <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false"><path d="M15 4.5 7.5 12 15 19.5" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
     <div class="app-header__title" id="header-title">Рынок у отеля</div>
+    <a class="icon-btn" id="orders-link" href="#/orders" aria-label="Мои заказы">
+      <span aria-hidden="true">📦</span>
+      <span class="cart-link__count orders-count" id="orders-count" aria-live="polite" hidden>0</span>
+    </a>
     <a class="icon-btn cart-link" id="cart-link" href="#/cart" aria-label="Корзина">
       <span aria-hidden="true">🛒</span>
       <span class="cart-link__count" id="cart-count" aria-live="polite" hidden>0</span>
@@ -42,6 +48,15 @@
   <main class="app-main" id="app" tabindex="-1">
     <noscript><p class="notice">Для работы сайта нужен включённый JavaScript.</p></noscript>
   </main>
+
+  <div class="modal" id="modal" hidden>
+    <div class="modal__card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <button class="modal__close" id="modal-close" type="button" aria-label="Закрыть">
+        <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/></svg>
+      </button>
+      <div class="modal__body" id="modal-body"></div>
+    </div>
+  </div>
 
   <nav class="cart-bar" id="cart-bar" aria-label="Корзина" hidden>
     <a class="btn btn--primary btn--block" href="#/cart" id="cart-bar-link">Корзина</a>

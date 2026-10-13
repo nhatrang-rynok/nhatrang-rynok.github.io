@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   nextQty, minOf, getCart, getQty, setQty, changeQty, removeItem, clearCart, subscribe,
   cartSummary, readCatalogCache, writeCatalogCache, _resetForTests,
+  addOrder, readOrders, updateOrderStatuses, isActiveOrder, repeatOrder, subscribeOrders,
 } from '../site/js/store.js';
 
 beforeEach(() => _resetForTests());
@@ -92,4 +93,72 @@ test('кэш каталога: свежий, старый, битый', () => {
   assert.deepEqual(fresh.data, data);
   assert.equal(fresh.stale, false);
   assert.equal(readCatalogCache(1000 + 8 * 24 * 3600 * 1000).stale, true);
+});
+
+// --- Мои заказы ---
+const order = (id, no, status) => ({ id, no, ts: 1_000, total: 780, items: [{ id: 'fr-001', name: 'Манго', unit: 'кг', qty: 1.5, price: 280 }], ...(status ? { status } : {}) });
+
+test('заказы: новый ставится первым, статус по умолчанию «Новый», повтор того же ID не дублирует', () => {
+  addOrder(order('a', 'N-0001'));
+  addOrder(order('b', 'N-0002'));
+  assert.deepEqual(readOrders().map(o => o.no), ['N-0002', 'N-0001']);
+  assert.equal(readOrders()[0].status, 'Новый');
+  addOrder(order('a', 'N-0001'));
+  assert.deepEqual(readOrders().map(o => o.no), ['N-0001', 'N-0002']);
+});
+
+test('заказы: активный — пока не «Доставлено» и не «Отменён»', () => {
+  assert.equal(isActiveOrder({ status: 'Новый' }), true);
+  assert.equal(isActiveOrder({ status: 'Связались' }), true);
+  assert.equal(isActiveOrder({ status: 'Закуплено' }), true);
+  assert.equal(isActiveOrder({ status: 'Доставлено' }), false);
+  assert.equal(isActiveOrder({ status: 'Отменён' }), false);
+});
+
+test('заказы: статусы обновляются по ID, подписчики получают уведомление, лишнее игнорируется', () => {
+  addOrder(order('a', 'N-0001'));
+  addOrder(order('b', 'N-0002'));
+  let calls = 0;
+  const off = subscribeOrders(() => calls++);
+  assert.equal(updateOrderStatuses({ a: 'Доставлено', zzz: 'Отменён' }), true);
+  assert.equal(readOrders().find(o => o.id === 'a').status, 'Доставлено');
+  assert.equal(readOrders().find(o => o.id === 'b').status, 'Новый');
+  assert.equal(calls, 1);
+  assert.equal(updateOrderStatuses({ a: 'Доставлено' }), false, 'то же значение — без изменений');
+  assert.equal(calls, 1);
+  off();
+});
+
+test('заказы: хранятся не больше 30, телефона и имени в записи нет', () => {
+  for (let i = 0; i < 35; i++) addOrder(order(`id-${i}`, `N-${i}`));
+  assert.equal(readOrders().length, 30);
+  assert.equal(readOrders()[0].id, 'id-34');
+  assert.ok(!JSON.stringify(readOrders()).match(/phone|телефон|room|comment/i));
+});
+
+test('повтор заказа: позиции попадают в корзину, недоступные и пропавшие возвращаются списком', () => {
+  const products = new Map([
+    ['fr-001', kg],
+    ['fr-008', piece],
+    ['fr-010', { ...kg, id: 'fr-010', stock: 'out' }],
+  ]);
+  const r = repeatOrder({ items: [
+    { id: 'fr-001', name: 'Манго', qty: 1.5 },
+    { id: 'fr-008', name: 'Помело', qty: 2 },
+    { id: 'fr-010', name: 'Дуриан', qty: 1 },
+    { id: 'zz-999', name: 'Старый товар', qty: 1 },
+  ] }, products);
+  assert.equal(r.added, 2);
+  assert.deepEqual(r.skipped, ['Дуриан', 'Старый товар']);
+  assert.deepEqual(getCart(), { 'fr-001': 1.5, 'fr-008': 2 });
+});
+
+test('повтор заказа: в корзине не удваивается, количество приводится к шагу и минимуму', () => {
+  setQty('fr-001', 3);
+  const products = new Map([['fr-001', kg], ['fr-003', light]]);
+  const r = repeatOrder({ items: [{ id: 'fr-001', name: 'Манго', qty: 1 }, { id: 'fr-003', name: 'Маракуйя', qty: 0.2 }] }, products);
+  assert.equal(r.added, 2);
+  assert.equal(getQty('fr-001'), 3, 'уже лежит больше — не уменьшаем и не удваиваем');
+  assert.equal(getQty('fr-003'), 0.5, 'минимум для товара');
+  assert.deepEqual(repeatOrder({ items: [{ id: 'zz-1', name: 'x', qty: 1 }] }, products), { added: 0, skipped: ['x'] });
 });

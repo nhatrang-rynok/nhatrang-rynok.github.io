@@ -204,3 +204,77 @@ export function readCatalogCache(now = Date.now()) {
 export function writeCatalogCache(data, now = Date.now()) {
   writeJson(CATALOG_KEY, { savedAt: now, data });
 }
+
+// --- Мои заказы ---
+// Заказы, оформленные с этого устройства. Телефон и имя не храним: только номер, состав и сумму.
+// status — последний известный статус из таблицы: «Новый», «Связались», «Закуплено», «Доставлено», «Отменён».
+
+const ORDERS_KEY = 'orders.v1';
+const MAX_ORDERS = 30;
+export const FINAL_STATUSES = ['Доставлено', 'Отменён'];
+
+export function readOrders() {
+  const stored = readJson(ORDERS_KEY);
+  if (!Array.isArray(stored)) return [];
+  return stored.filter(o => o && typeof o.id === 'string' && typeof o.no === 'string' && Array.isArray(o.items));
+}
+
+export function isActiveOrder(order) {
+  return !FINAL_STATUSES.includes(order.status);
+}
+
+// order: { id (clientOrderId), no, ts, total, items: [{ id, name, unit, qty, price }] }. Новый заказ ставится первым.
+export function addOrder(order) {
+  const rest = readOrders().filter(o => o.id !== order.id);
+  writeJson(ORDERS_KEY, [{ status: 'Новый', ...order }, ...rest].slice(0, MAX_ORDERS));
+  notifyOrders();
+}
+
+// updates: { clientOrderId: статус }; возвращает, изменилось ли что-то
+export function updateOrderStatuses(updates) {
+  let changed = false;
+  const next = readOrders().map(o => {
+    const status = updates[o.id];
+    if (status && status !== o.status) {
+      changed = true;
+      return { ...o, status };
+    }
+    return o;
+  });
+  if (changed) {
+    writeJson(ORDERS_KEY, next);
+    notifyOrders();
+  }
+  return changed;
+}
+
+const orderListeners = new Set();
+
+export function subscribeOrders(fn) {
+  orderListeners.add(fn);
+  return () => orderListeners.delete(fn);
+}
+
+function notifyOrders() {
+  for (const fn of [...orderListeners]) fn();
+}
+
+// Повтор заказа: кладёт позиции в корзину. Что недоступно или убрано из каталога — возвращает в skipped.
+export function repeatOrder(order, products) {
+  const skipped = [];
+  let added = 0;
+  const next = { ...current() };
+  for (const item of order.items) {
+    const product = products?.get(item.id);
+    if (!product || product.stock === 'out') {
+      skipped.push(item.name || item.id);
+      continue;
+    }
+    const step = stepOf(product);
+    const qty = Math.min(MAX_QTY, Math.max(minOf(product), Math.round(item.qty / step) * step));
+    next[item.id] = round3(Math.max(next[item.id] || 0, qty));
+    added++;
+  }
+  if (added) commit(next);
+  return { added, skipped };
+}

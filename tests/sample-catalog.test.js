@@ -33,7 +33,7 @@ test('настройки: публичные ключи и заглушки ко
   assert.equal(s.telegram, 'primer_operator');
   assert.ok(s.done_text.length > 0);
   // Секретные настройки наружу не отдаются
-  for (const secret of ['rate_vnd_per_rub', 'rub_rounding', 'popular_days', 'popular_count']) {
+  for (const secret of ['rate_vnd_per_rub', 'rate_vnd_per_usd', 'rub_rounding', 'popular_days', 'popular_count']) {
     assert.ok(!(secret in s), `${secret} не должен попадать на сайт`);
   }
 });
@@ -55,6 +55,15 @@ test('категории', () => {
 test('товары: 10–15 штук, уникальные ID по шаблону', () => {
   assert.ok(catalog.products.length >= 10 && catalog.products.length <= 15, `товаров: ${catalog.products.length}`);
   assert.equal(byId.size, catalog.products.length, 'ID уникальны');
+});
+
+test('товары: донги, доллары и вес штуки согласованы с рублёвой ценой и курсами 300 и 25 000', () => {
+  for (const p of catalog.products) {
+    assert.ok(isNum(p.vnd) && p.vnd > 0, `${p.id}: цена в донгах`);
+    assert.ok(Math.abs(p.usd - Math.round(p.vnd / 25000 * 100) / 100) < 1e-9, `${p.id}: доллары = донги / 25 000`);
+    assert.ok(Number.isInteger(p.pw) && p.pw >= 0, `${p.id}: вес штуки в граммах`);
+    if (p.cat === 'fruits') assert.ok(p.pw > 0, `${p.id}: у фрукта указан вес штуки`);
+  }
 });
 
 for (const p of catalog.products) {

@@ -9,7 +9,7 @@ const browser = await launch();
 const NB = / /g;
 const text = async (page, sel) => ((await page.textContent(sel)) || '').replace(NB, ' ').trim();
 const shot = (page, name) => SHOTS && page.screenshot({ path: `${SHOTS}/${name}.png` });
-const waitH1 = (page, t) => page.waitForFunction(x => document.querySelector('h1')?.textContent.includes(x), t);
+const waitH1 = (page, t) => page.waitForFunction(x => [...document.querySelectorAll('h1')].some(h => h.textContent.includes(x)), t);
 const route = (page, patch) => page.route('**/data/catalog.sample.json', r => {
   const data = structuredClone(sample);
   patch(data);
@@ -42,7 +42,7 @@ for (const width of [390, 360]) {
   check(await page.isHidden('#cart-bar'), `${tag} пустая корзина: нижней панели нет`);
   check(await page.isHidden('#cart-count'), `${tag} пустая корзина: счётчика в шапке нет`);
   const links = await page.$$eval('.contacts a', as => as.map(a => a.getAttribute('href')));
-  check(links.includes('https://wa.me/84000000000') && links.includes('https://t.me/primer_operator') && links.includes('tel:+84000000000'), `${tag} главная: кнопки связи с заглушками`);
+  check(links.includes('https://wa.me/84000000000') && links.includes('https://t.me/primer_operator') && !links.some(l => l.startsWith('tel:')) && links.length === 2, `${tag} главная: кнопки связи WhatsApp и Telegram, без «Позвонить»`);
   await overflow('главная');
   if (width === 390) await shot(page, 't13-01-home');
 
@@ -80,11 +80,11 @@ for (const width of [390, 360]) {
   // --- Товар
   await mango.locator('.card__link').click();
   await waitH1(page, 'Манго');
-  check((await text(page, '.product__price')) === '≈ 280 ₽ / кг', `${tag} товар: цена за кг`);
-  check((await text(page, '.qty__value')) === '1,5 кг', `${tag} товар: степпер показывает то, что в корзине`);
-  check((await page.locator('.notice').count()) === 1 && (await text(page, '.notice')).includes('перекрёстная реакция'), `${tag} товар: предупреждение`);
-  check((await text(page, '#app')).includes('Где куплено: Рынок (пример)'), `${tag} товар: «Где куплено»`);
-  const related = await page.$$eval('.strip .card__title', ts => ts.map(t => t.textContent));
+  check((await text(page, '#modal-body .product__price')) === '≈ 280 ₽ / кг', `${tag} товар: цена за кг`);
+  check((await text(page, '#modal-body .qty__value')) === '1,5 кг', `${tag} товар: степпер показывает то, что в корзине`);
+  check((await page.locator('#modal-body .notice').count()) === 1 && (await text(page, '#modal-body .notice')).includes('перекрёстная реакция'), `${tag} товар: предупреждение`);
+  check((await text(page, '#modal-body')).includes('Где куплено: Рынок (пример)'), `${tag} товар: «Где куплено»`);
+  const related = await page.$$eval('#modal-body .strip .card__title', ts => ts.map(t => t.textContent));
   check(related[0] === 'Драконий фрукт (питайя)' && related[1] === 'Помело', `${tag} «Вам может понравиться»: ${related.slice(0, 3).join(', ')}`);
   await page.locator('.product__buy [data-role="plus"]').click();
   check((await text(page, '.product__buy .qty__value')) === '2 кг', `${tag} товар: «+» → «2 кг»`);
@@ -93,8 +93,9 @@ for (const width of [390, 360]) {
   if (width === 390) { await shot(page, 't13-04-product'); await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await shot(page, 't13-05-product-bottom'); await page.evaluate(() => window.scrollTo(0, 0)); }
 
   // --- Назад и сохранение корзины
-  await page.click('#back-btn');
-  await waitH1(page, 'Фрукты');
+  await page.click('#modal-close');
+  await page.waitForSelector('#modal', { state: 'hidden' });
+  check(page.url().endsWith('#/c/fruits'), `${tag} крестик закрыл карточку: адрес вернулся к категории`);
   check((await text(page, '.card:has(.card__link:text-is("Манго")) .qty__value')) === '2 кг', `${tag} возврат: в списке «2 кг»`);
   await page.reload();
   await page.waitForSelector('.card');
@@ -167,7 +168,7 @@ for (const width of [390, 360]) {
   await page.route('**/data/catalog.sample.json', r => r.abort());
   await page.goto(base);
   await waitH1(page, 'Не удалось загрузить каталог');
-  check((await page.locator('.contacts a').count()) === 3, 'ошибка загрузки: есть кнопки связи с запасными контактами');
+  check((await page.locator('.contacts a').count()) === 2, 'ошибка загрузки: есть кнопки связи с запасными контактами');
   await shot(page, 't13-07-error');
   await page.unroute('**/data/catalog.sample.json');
   await page.click('text=Повторить');

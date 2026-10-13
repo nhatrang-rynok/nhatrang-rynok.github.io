@@ -81,8 +81,11 @@ test('checkPhone_: границы длины и номер без кода ст�
   assert.equal(g.checkPhone_('').error, 'Введите номер телефона');
   assert.equal(g.checkPhone_('+7 000').ok, false);
   assert.equal(g.checkPhone_('+7000000000000000').ok, false);
-  assert.match(g.checkPhone_('999 000 00 00').error, /код страны/);
+  assert.match(g.checkPhone_('999 000 00 00').error, /кода страны/);
   assert.equal(g.checkPhone_('+999 000 00 00').ok, true);
+  // Любой код страны (D78): Украина, Беларусь, Казахстан, Германия, США…
+  for (const phone of ['+380 67 123 45 67', '+375 29 123-45-67', '+7 701 123 45 67', '+49 1512 3456789', '+1 (415) 555-0100', '+66 81 234 5678']) assert.equal(g.checkPhone_(phone).ok, true, phone);
+  assert.equal(g.checkPhone_('+380 67 123 45 67').phone, '+380671234567');
 });
 
 test('телефон: сервер и сайт принимают и отклоняют одно и то же', () => {
@@ -204,7 +207,7 @@ test('каталог: товар из строки таблицы получае
   assert.equal(fatal, false);
   assert.deepEqual(errors, []);
   assert.deepEqual(catalog.products, [{
-    id: 'fr-001', cat: 'fruits', name: 'Манго', short: '', desc: '', price: 280, unit: 'кг', step: 1, min: 1, img: '', warn: '', src: '',
+    id: 'fr-001', cat: 'fruits', name: 'Манго', short: '', desc: '', price: 280, vnd: 84000, usd: 3.36, pw: 0, unit: 'кг', step: 1, min: 1, img: '', warn: '', src: '',
     adult: false, stock: 'in', rel: [], sort: 1000000,
   }]);
 });
@@ -472,15 +475,49 @@ test('заказ: недоступные товары', () => {
   assert.equal(check(goodBody({ items: [{ id: 'constructor', qty: 1 }] })).error, 'ITEM_UNAVAILABLE');
 });
 
-test('заказ: 18+ обязательна только для алкоголя и только значением true', () => {
+test('заказ: подтверждение возраста не требуется (D78), но заказ с товаром 18+ помечается', () => {
   const rum = [{ id: 'al-001', qty: 1 }];
-  assert.ok(check(goodBody({ items: rum, adultConfirmed: false })).fields.adult);
-  assert.ok(check(goodBody({ items: rum, adultConfirmed: 'true' })).fields.adult, 'строка не считается подтверждением');
-  assert.ok(check(goodBody({ items: rum, adultConfirmed: undefined })).fields.adult);
-  const ok = check(goodBody({ items: rum, adultConfirmed: true }));
-  assert.equal(ok.ok, true);
-  assert.equal(ok.order.hasAdult, true);
-  assert.equal(check(goodBody()).ok, true, 'без алкоголя галочка не нужна');
+  for (const adultConfirmed of [false, 'true', undefined, null]) {
+    const r = check(goodBody({ items: rum, adultConfirmed }));
+    assert.equal(r.ok, true, `adultConfirmed=${String(adultConfirmed)}`);
+    assert.equal(r.order.hasAdult, true);
+  }
+  assert.equal(check(goodBody()).order.hasAdult, false);
+});
+
+test('цены: донги, доллары и вес штуки для карточки товара', () => {
+  assert.equal(g.computeVndPrice_(84000, 280, 300), 84000, 'донги из таблицы главнее');
+  assert.equal(g.computeVndPrice_('', 650, 300), 195000, 'нет донгов — рубли × курс');
+  assert.equal(g.computeVndPrice_('', null, 300), 0);
+  assert.equal(g.computeUsdPrice_(84000, 25000), 3.36);
+  assert.equal(g.computeUsdPrice_(300000, 25000), 12);
+  assert.equal(g.computeUsdPrice_(0, 25000), 0);
+  assert.equal(g.computeUsdPrice_(84000, 0), 0);
+  assert.equal(g.parsePieceWeight_('200'), 200);
+  assert.equal(g.parsePieceWeight_(0.4), 0);
+  assert.equal(g.parsePieceWeight_('abc'), 0);
+  assert.equal(g.parsePieceWeight_(1e9), 0);
+});
+
+test('статусы заказов гостя: по ID клиента, без персональных данных', () => {
+  const a = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+  const b = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
+  const values = [
+    ['Номер', 'Статус', 'Телефон', 'Имя', 'ID клиента'],
+    ['N-0001', 'Доставлено', '+7 000 000-00-00', 'Тест', a],
+    ['N-0002', 'что-то странное', '+7 000 000-00-00', 'Тест', b],
+    ['', '', '', '', ''],
+  ];
+  const r = plain(g.matchOrderStatuses_([a, b, 'cccccccc-3333-4333-8333-cccccccccccc'], values));
+  assert.deepEqual(r, [
+    { id: a, found: true, orderNo: 'N-0001', status: 'Доставлено' },
+    { id: b, found: true, orderNo: 'N-0002', status: 'Новый' },
+    { id: 'cccccccc-3333-4333-8333-cccccccccccc', found: false, orderNo: '', status: '' },
+  ]);
+  assert.ok(!JSON.stringify(r).includes('+7'));
+  assert.deepEqual(plain(g.matchOrderStatuses_([a], [])), [{ id: a, found: false, orderNo: '', status: '' }]);
+  assert.deepEqual(plain(g.parseOrderIdList_(`${a}, ${a},плохой, ${b}`)), [a, b]);
+  assert.equal(g.parseOrderIdList_(Array.from({ length: 30 }, (_, i) => `id-number-${String(i).padStart(4, '0')}`).join(',')).length, 20);
 });
 
 test('заказ: мусор вместо тела запроса не ломает проверку', () => {
@@ -518,7 +555,7 @@ test('сообщение в Telegram: текст, итог, 18+, экранир�
     `• Манго — 2 кг × 280${NB}₽ = 560${NB}₽`,
     `• Ром тёмный, 0,7 л — 1 бут. 0,7 л × 750${NB}₽ = 750${NB}₽`,
     `<b>Итого ≈ 1${NB}310${NB}₽</b>`,
-    '🔞 Возраст подтверждён',
+    '🔞 В заказе есть товары 18+',
     '',
     '💬 Позвонить &lt;за час&gt;',
   ].join('\n'));
